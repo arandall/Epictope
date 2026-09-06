@@ -1,0 +1,16 @@
+README.md
+  h_e49bc6578e470a 16,187-204
+tests/web/test_app.py
+  h_e49bc6578e470a 3,69-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "88fe14812de057cb69ed65860a6771de3a493ad7",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
