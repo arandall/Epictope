@@ -6,6 +6,11 @@ rm(list = ls())
 # helper functions
 setup_files()
 check_config()
+outdir <- Sys.getenv("EPICTORE_OUTDIR", "")
+if (outdir != "") {
+  outputFolder <- outdir
+  if (!dir.exists(outputFolder)) dir.create(outputFolder, recursive = TRUE)
+}
 args <- commandArgs(trailingOnly = TRUE); query <- args[1]
 if (length(args) >= 2) {
     message("Using user-supplied structure file.")
