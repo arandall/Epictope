@@ -1,0 +1,18 @@
+.dockerignore
+  h_e49bc6578e470a 2-3,16-18
+Dockerfile
+  h_e49bc6578e470a 1,3-12,16-18,21-30,32,42-43,57-58,86-90,98-104
+tests/smoke/smoke.sh
+  h_e49bc6578e470a 1-24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "35d6b43d806d9289bcc91635716011fb632c549c",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
