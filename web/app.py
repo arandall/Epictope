@@ -40,8 +40,9 @@ class RunReq(BaseModel):
 async def run(req: RunReq, custom_structure: UploadFile | None = File(None)):
     path = None
     if custom_structure:
-        import pathlib, tempfile
-        p = pathlib.Path(tempfile.gettempdir()) / custom_structure.filename
+        import pathlib, tempfile, uuid
+        safe_name = pathlib.Path(custom_structure.filename).name or "structure.cif"
+        p = pathlib.Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{safe_name}"
         p.write_bytes(await custom_structure.read())
         path = str(p)
     job_id = pipeline.JobStore.create(req.uniprot_id, path, req.n_terminal)
