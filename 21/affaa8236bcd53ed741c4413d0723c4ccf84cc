@@ -1,0 +1,22 @@
+webui/src/main.ts
+  h_e49bc6578e470a 3-4,39-41
+webui/src/sequence.ts
+  h_e49bc6578e470a 1-18
+webui/src/style.css
+  h_e49bc6578e470a 8-10
+webui/src/sync.ts
+  h_e49bc6578e470a 1-5
+webui/test/sync.test.ts
+  h_e49bc6578e470a 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "21affaa8236bcd53ed741c4413d0723c4ccf84cc",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
