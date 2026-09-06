@@ -89,8 +89,9 @@ structure confidence (pLDDT).
   `[{accession, gene, organism, reviewed, hasAlphaFold}]`.
 - `POST /api/resolve` `{accessions:[...]}` → resolver mapping per
   `resolve_accessions.py` (`input, resolved, reviewed, af_id, note`).
-- `POST /api/run` `{uniprot_id, custom_structure?(upload .cif), n_terminal?}`
-  → creates a job, returns `job_id`.
+- `POST /api/run` (**multipart/form-data**: `uniprot_id` field, optional
+  `n_terminal` field, optional `custom_structure` `.cif` file upload — a file
+  upload cannot ride in a JSON body) → creates a job, returns `job_id`.
 - `GET /api/jobs/{id}` → `{status, progress, error?, result?}`.
 - `GET /api/results/{id}/score` → JSON array of score-CSV rows (for chart+table).
 - `GET /api/results/{id}/msa` → parsed MSA (per-sequence rows + per-column
@@ -104,9 +105,11 @@ structure confidence (pLDDT).
   one R run executes at a time.
 - **Cache-first:** if `outputs/<ID>/<ID>_score.csv` exists (and, for custom
   structures, a matching structure-hash sidecar), reuse it without re-running.
-- **Enhancement to `scripts/single_score.R`:** accept an optional **4th argument
-  = output directory** (defaults to `outputs`), so results land in
-  `outputs/<ID>/`. This is backward compatible with the existing CLI.
+- **Enhancement to `scripts/single_score.R`:** honor an optional **`EPICTORE_OUTDIR`
+  environment variable** (defaults to `outputs`) as `outputFolder`, so results land
+  in `outputs/<ID>/`. This is backward compatible with the existing CLI (when the env
+  var is unset, behavior is unchanged). The Python backend sets `EPICTORE_OUTDIR` to
+  `outputs/<ID>` when launching the R subprocess.
 - Custom structure + N-terminal residue are forwarded to `single_score.R`
   exactly as the existing CLI does.
 - **Optional enhancement:** parse per-residue **pLDDT** from the AlphaFold mmCIF
@@ -122,10 +125,12 @@ structure confidence (pLDDT).
   local maxima of the `min` score), with their min score and the
   `min_feature` driving them.
 - **Score chart (Chart.js):** multi-track of the four normalized features
-  (`normalized_entropy`, `ss_score`, `rsa`, `inv_anchor2`) plus `sum_score` and
-  `min`; `min` emphasized, others toggleable. Rolling-window-7 smoothing line,
-  mirroring `plot_scores.R`. **Top candidate positions marked with vertical
-  annotations.**
+   (`normalized_entropy`, `ss_score`, `rsa`, `inv_anchor2`) plus `sum_score` and
+   `min`; `min` emphasized, others toggleable. Tracks are drawn **raw** so
+   spikes sit exactly on their residue (goal 5), plus a dashed rolling-window-7
+   smoothed overlay on `min`, mirroring `plot_scores.R`. **Top candidate
+   positions (ranked local maxima of `min`) marked with vertical
+   annotations.**
 - **Linked hover (core requirement):** a shared position index links the chart
   and a **query-sequence strip** (and the MSA viewer). Hovering a residue cell
   highlights the matching chart point (programmatic active element + tooltip);

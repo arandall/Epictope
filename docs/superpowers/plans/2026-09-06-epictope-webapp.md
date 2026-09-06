@@ -27,10 +27,11 @@
 
 **Backend (`web/`)**
 - `web/config.py` — paths (`APP_DIR=/app`, `DATA_DIR`, `OUTPUTS_DIR`, `MODELS_DIR`, `R_SCRIPT`, `INSTALL_MARKER`, `INSTALL_LOG`), constants.
-- `web/pipeline.py` — `JobStore` (in-memory + file markers), `enqueue_job`, `run_job` (subprocess wrapper), `build_command`, `result_exists`, `parse_score_csv`, `parse_msa`, `compute_top_sites`, `write_meta`, `read_meta`, `finalize_meta`.
-- `web/uniprot.py` — `search(term) -> list[dict]`, `resolve(accessions) -> list[dict]` (imports `resolve_one` from `scripts/resolve_accessions.py`).
-- `web/app.py` — FastAPI app, all `/api/*` routes, static mount, background startup of `install.R`.
-- `web/requirements.txt` — `fastapi`, `uvicorn[standard]`, `pytest`, `httpx`.
+- `web/pipeline.py` — `JobStore` (in-memory), `make_job_id` (deterministic sha256), `enqueue_job` (single-flight queue + dedupe), `_worker`, `run_job` (Popen streaming to `run.log` + progress), `build_command`, `result_exists`, `ensure_meta`, `finalize_meta`.
+- `web/parsing.py` — `parse_score_csv` (type-coerced), `parse_msa`, `compute_top_sites` (local maxima), `write_meta`, `read_meta`.
+- `web/uniprot.py` — `search(term) -> list[dict]` (retry + empty-guard), `resolve(accessions) -> list[dict]` (imports `resolve_one` from `scripts/resolve_accessions.py`).
+- `web/app.py` — FastAPI app, all `/api/*` routes, static mount. The entrypoint owns background `install.R`; the app only reports state.
+- `web/requirements.txt` — `fastapi`, `uvicorn[standard]`, `python-multipart`, `pytest`, `httpx`.
 - `tests/web/test_config.py`, `test_uniprot.py`, `test_pipeline.py`, `test_parsing.py`, `test_pipeline_meta.py`, `test_app.py`.
 
 **Frontend (`webui/`)**
@@ -108,6 +109,7 @@ def status():
 # web/requirements.txt
 fastapi
 uvicorn[standard]
+python-multipart
 pytest
 httpx
 ```
@@ -132,7 +134,7 @@ git commit -m "feat(web): backend skeleton with /api/status endpoint"
 
 **Interfaces:**
 - `config.INSTALL_MARKER` and `config.INSTALL_LOG` used by `app.py`.
-- `app.py` runs `install.R` (if marker absent) as a detached subprocess at startup, logging to `INSTALL_LOG`; writes `INSTALL_MARKER` on completion (entrypoint handles marker).
+- The **entrypoint is the single owner** of background `install.R`: `docker-entrypoint.sh` launches it detached, logs to `INSTALL_LOG`, and writes `INSTALL_MARKER` on completion. `app.py` MUST NOT also start `install.R` (see commit `d02e2d9` — duplicate starters caused a race). `app.py` only reports install state via `/api/status`.
 
 - [ ] **Step 1: Write the failing test**
 ```python
@@ -656,6 +658,832 @@ git commit -m "feat(web): results endpoints (score, msa, info) with top-site com
 
 ---
 
+## Task 5.5: Backend corrections — run endpoint, 404s, single-flight queue, meta, peaks
+
+> **Why:** Tasks 1–5 are complete (commits `d985c3e`–`ceb2b1c`) but were produced by a
+> weaker model. Review with live TestClient probing found correctness gaps the frontend
+> (Tasks 6+) builds on. Fix them now so the frontend isn't built on broken contracts:
+> - `POST /api/run` returns **422 for every client** — a Pydantic body model (`RunReq`)
+>   cannot be combined with `File()` in FastAPI (verified: JSON *and* multipart both 422
+>   with `{"loc":["body","req"],"msg":"Field required"}`). The frontend `FormData`
+>   (Task 6) and the smoke test `curl -F` (Task 10) would both fail.
+> - Missing results/jobs return **HTTP 200**, not 404 — `return {"error": ...}, 404`
+>   serializes as the JSON array `[{"error":"not found"},404]` (verified).
+> - `enqueue_job` spawns **one thread per job** → concurrent BLAST/R runs, violating
+>   spec §4.3 ("only one R run executes at a time"). Job ids use randomized `hash()`
+>   (salted per process) and `create()` clobbers an in-flight identical job.
+> - Jobs carry **no `progress`** (spec §4.2 promises it) and R output vanishes.
+> - `/api/results/{id}/info` **404s for everything** — nothing writes meta JSON yet,
+>   including on the cache-hit path (goal #7).
+> - `compute_top_sites` is a plain top-N sort → adjacent residues of one peak; spec §4.4
+>   wants ranked **distinct** insertion sites (local maxima).
+> - `parse_score_csv` leaves numerics as strings and doesn't map R's `NA`.
+> - `uniprot.search` raises → 500 on network blips (spec §5 wants retry) and sends
+>   empty queries to UniProt.
+> - `run_job` trusts exit code 0 without checking the outputs exist.
+> - `web/requirements.txt` omits `python-multipart` (the app cannot boot with
+>   Form/File params without it; it's in `pyproject.toml` but not here).
+
+**Files:**
+- Modify: `web/app.py` (Form-based `/api/run`; real 404s; drop `RunReq`)
+- Modify: `web/pipeline.py` (full rewrite below: queue worker, deterministic ids,
+  Popen streaming to `run.log`, `ensure_meta`, output verification)
+- Modify: `web/parsing.py` (`parse_score_csv` type coercion + NA; `compute_top_sites`
+  local maxima)
+- Modify: `web/uniprot.py` (`search` retry + empty-guard; close responses)
+- Modify: `web/requirements.txt` (add `python-multipart`)
+- Modify: `tests/web/test_parsing.py`, `tests/web/test_uniprot.py`,
+  `tests/web/test_pipeline.py`, `tests/web/test_app.py` (full content below)
+
+**Interfaces (changed — Tasks 6+ rely on these):**
+- `POST /api/run` consumes **multipart/form-data**: `uniprot_id` (str, required),
+  `n_terminal` (int, optional), `custom_structure` (.cif file, optional) →
+  `{"job_id": str}`. Matches `api.ts` `runPrediction` (FormData) and smoke test `curl -F`.
+- `GET /api/jobs/{id}` → `{status: "queued"|"running"|"done"|"error", progress: str,
+  error?, result?}`; **404** for unknown ids.
+- `GET /api/results/{id}/{score,msa,info}` → **404** (HTTPException) when absent.
+- `parse_score_csv(path) -> list[dict]` — numeric columns as `int|float|None`
+  (`NA`→`None`); string columns (`aa`, `ss`, `chain`, `min_feature`) unchanged.
+- `compute_top_sites(rows, n=5) -> list[dict]` — top-N **local maxima** of `min`
+  (strictly greater than both neighbours; terminal residues eligible).
+  `webui/src/chart.ts` `topSites` (Task 6) MUST implement the identical rule.
+- `pipeline.ensure_meta(uniprot_id, custom_structure=None, n_terminal=None,
+  resolution_note="")` → writes `<ID>_meta.json` with `uniprot_id`, `length`,
+  `top_sites`, `gene`, `organism`, `reviewed`, `hasAlphaFold`, `resolution_note`;
+  tolerant of UniProt failure. Task 9's `finalize_meta` delegates to it.
+
+- [ ] **Step 1: Replace the tests (they must fail against the current code)**
+
+```python
+# tests/web/test_parsing.py (full replacement)
+from web import parsing
+
+SCORE = ("position,normalized_entropy,ss_score,rsa,inv_anchor2,sum_score,min,min_feature,aa\n"
+         "1,0,1,1.2,0.6,2.8,0,normalized_entropy,M\n"
+         "2,0.1,1,0.8,0.65,2.7,0.1,normalized_entropy,T\n")
+
+def test_parse_score_csv(tmp_path):
+    p = tmp_path / "Q9W7E7_score.csv"; p.write_text(SCORE)
+    rows = parsing.parse_score_csv(p)
+    assert rows[0]["position"] == 1 and rows[0]["aa"] == "M"
+    assert rows[1]["min"] == 0.1                  # coerced to float, not str
+    assert rows[0]["normalized_entropy"] == 0
+
+def test_parse_score_csv_na_becomes_none(tmp_path):
+    p = tmp_path / "X_score.csv"
+    p.write_text("position,min,aa,phi\n1,NA,M,NA\n")
+    rows = parsing.parse_score_csv(p)
+    assert rows[0]["min"] is None and rows[0]["phi"] is None
+
+def test_compute_top_sites_detects_distinct_peaks():
+    rows = [{"position": i + 1, "min": m, "min_feature": "x"}
+            for i, m in enumerate([0.1, 0.9, 0.8, 0.2, 0.85, 0.7])]
+    top = parsing.compute_top_sites(rows, n=2)
+    assert [t["position"] for t in top] == [2, 5]  # two peaks, not residues 2 and 3
+
+def test_parse_msa(tmp_path):
+    p = tmp_path / "Q9W7E7_msa.fasta"; p.write_text(">Q9W7E7\nACGT\n>other\nAC-T\n")
+    msa = parsing.parse_msa(p)
+    assert msa["records"][0]["seq"] == "ACGT"
+    assert msa["query"] == "Q9W7E7"
+
+def test_meta_roundtrip(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    parsing.write_meta("Q9W7E7", gene="smad5", organism="Danio rerio")
+    meta = parsing.read_meta("Q9W7E7")
+    assert meta["gene"] == "smad5"
+```
+
+```python
+# tests/web/test_uniprot.py (full replacement)
+import json
+import urllib.error
+import urllib.request
+from web import uniprot
+
+class FakeResp:
+    """urlopen stand-in that also works as a context manager."""
+    def __init__(self, payload): self._p = payload
+    def read(self): return json.dumps(self._p).encode()
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+def test_search_parses_json(monkeypatch):
+    fake = {"results": [
+        {"primaryAccession": "Q9W7E7", "genes": [{"geneName": {"value": "smad5"}}],
+         "organism": {"scientificName": "Danio rerio"},
+         "entryType": "UniProtKB reviewed",
+         "uniProtKBCrossReferences": [{"database": "AlphaFoldDB", "id": "Q9W7E7"}]}]}
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: FakeResp(fake))
+    rows = uniprot.search("smad5")
+    assert rows[0]["accession"] == "Q9W7E7"
+    assert rows[0]["gene"] == "smad5"
+    assert rows[0]["organism"] == "Danio rerio"
+    assert rows[0]["reviewed"] is True
+    assert rows[0]["hasAlphaFold"] is True
+
+def test_search_network_failure_retries_then_empty(monkeypatch):
+    calls = {"n": 0}
+    def boom(*a, **k):
+        calls["n"] += 1
+        raise urllib.error.URLError("timed out")
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    assert uniprot.search("smad5") == []
+    assert calls["n"] == 2  # one retry
+
+def test_search_empty_term_short_circuits(monkeypatch):
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no network")))
+    assert uniprot.search("") == []
+    assert uniprot.search("   ") == []
+
+def test_resolve_uses_resolve_one(monkeypatch):
+    from web.uniprot import resolve
+    monkeypatch.setattr("web.uniprot.resolve_one",
+                        lambda acc: {"input": acc, "resolved": "P12345", "reviewed": True,
+                                     "af_id": "P12345", "note": "ok"})
+    rows = resolve(["A0A0R4IFS9"])
+    assert rows[0]["resolved"] == "P12345"
+```
+
+```python
+# tests/web/test_pipeline.py (full replacement)
+import threading
+import time
+from pathlib import Path
+from web import parsing, pipeline
+
+SCORE_CSV = ("position,normalized_entropy,ss_score,rsa,inv_anchor2,sum_score,min,min_feature,aa\n"
+             "1,0,1,1,0.6,2.6,0.1,n_e,M\n"
+             "2,0.1,1,0.8,0.65,2.55,0.9,n_e,T\n"
+             "3,0,1,1,0.6,2.6,0.2,n_e,A\n")
+
+class FakePopen:
+    """Minimal Popen stand-in: canned stdout, already-exited returncode."""
+    def __init__(self, lines=(), returncode=0):
+        import io
+        self.stdout = io.StringIO("".join(lines))
+        self.returncode = returncode
+    def poll(self):
+        return self.returncode
+    def kill(self):
+        self.returncode = -9
+
+def make_fake_popen(uniprot_id="Q9W7E7", lines=("some r output\n",),
+                    returncode=0, write_outputs=True):
+    captured = {}
+    def _fake(cmd, cwd=None, env=None, **kw):
+        captured["cmd"], captured["cwd"], captured["env"] = cmd, cwd, env
+        if write_outputs:
+            out = Path(env["EPICTORE_OUTDIR"])
+            (out / f"{uniprot_id}_score.csv").write_text(SCORE_CSV)
+            (out / f"{uniprot_id}_msa.fasta").write_text(f">{uniprot_id}\nMA\n")
+        return FakePopen(lines=lines, returncode=returncode)
+    _fake.captured = captured
+    return _fake
+
+def test_result_exists_true(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    (tmp_path / "Q9W7E7").mkdir()
+    (tmp_path / "Q9W7E7" / "Q9W7E7_score.csv").write_text("position,min\n1,0\n")
+    assert pipeline.result_exists("Q9W7E7") is True
+
+def test_result_exists_false(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    assert pipeline.result_exists("Q9W7E7") is False
+
+def test_build_command_basic():
+    cmd = pipeline.build_command("Q9W7E7")
+    assert cmd[0].endswith("Rscript") and "Q9W7E7" in cmd
+
+def test_build_command_custom():
+    cmd = pipeline.build_command("Q9W7E7", custom_structure="/x/m.cif", n_terminal=57)
+    assert "/x/m.cif" in cmd and "57" in cmd
+
+def test_job_id_deterministic():
+    assert pipeline.JobStore.create("Q9W7E7") == pipeline.JobStore.create("Q9W7E7")
+
+def test_enqueue_job_cache_first(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"; d.mkdir()
+    (d / "Q9W7E7_score.csv").write_text(SCORE_CSV)
+    monkeypatch.setattr(pipeline.uniprot, "search", lambda q: [])
+    monkeypatch.setattr(pipeline.subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not run")))
+    job_id = pipeline.JobStore.create("Q9W7E7")
+    pipeline.enqueue_job(job_id, "Q9W7E7")
+    assert pipeline.JobStore.get(job_id)["status"] == "done"
+    assert parsing.read_meta("Q9W7E7") is not None  # meta (re)written on cache hit
+
+def test_run_job_sets_outdir_and_cwd(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    monkeypatch.setattr(pipeline.uniprot, "search", lambda q: [])
+    fake = make_fake_popen()
+    monkeypatch.setattr(pipeline.subprocess, "Popen", fake)
+    job_id = pipeline.JobStore.create("Q9W7E7")
+    pipeline.run_job(job_id, "Q9W7E7")
+    assert fake.captured["cwd"] == str(tmp_path)
+    assert fake.captured["env"]["EPICTORE_OUTDIR"].endswith("Q9W7E7")
+    assert pipeline.JobStore.get(job_id)["status"] == "done"
+    assert (tmp_path / "Q9W7E7" / "run.log").exists()
+    assert parsing.read_meta("Q9W7E7") is not None  # meta written on run success
+
+def test_run_job_custom_structure_sidecar(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    monkeypatch.setattr(pipeline.uniprot, "search", lambda q: [])
+    monkeypatch.setattr(pipeline.subprocess, "Popen", make_fake_popen())
+    job_id = pipeline.JobStore.create("Q9W7E7", custom_structure="/x/m.cif")
+    pipeline.run_job(job_id, "Q9W7E7", custom_structure="/x/m.cif")
+    sidecar = tmp_path / "Q9W7E7" / "custom_structure.txt"
+    assert sidecar.exists() and sidecar.read_text() == "/x/m.cif"
+    assert pipeline.JobStore.get(job_id)["status"] == "done"
+
+def test_run_job_error_path(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    fake = make_fake_popen(lines=("boom: something failed\n",), returncode=1)
+    monkeypatch.setattr(pipeline.subprocess, "Popen", fake)
+    job_id = pipeline.JobStore.create("Q9W7E7")
+    pipeline.run_job(job_id, "Q9W7E7")
+    state = pipeline.JobStore.get(job_id)
+    assert state["status"] == "error" and "boom" in state["error"]
+
+def test_run_job_errors_when_outputs_missing(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    fake = make_fake_popen(returncode=0, write_outputs=False)  # exit 0, no files
+    monkeypatch.setattr(pipeline.subprocess, "Popen", fake)
+    job_id = pipeline.JobStore.create("Q9W7E7")
+    pipeline.run_job(job_id, "Q9W7E7")
+    state = pipeline.JobStore.get(job_id)
+    assert state["status"] == "error" and "did not produce" in state["error"]
+
+def test_ensure_meta_writes_json_with_peak_top_sites(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"; d.mkdir()
+    (d / "Q9W7E7_score.csv").write_text(SCORE_CSV)
+    monkeypatch.setattr(pipeline.uniprot, "search", lambda q: [
+        {"accession": "Q9W7E7", "gene": "smad5", "organism": "Danio rerio",
+         "reviewed": True, "hasAlphaFold": True}])
+    pipeline.ensure_meta("Q9W7E7")
+    meta = parsing.read_meta("Q9W7E7")
+    assert meta["gene"] == "smad5" and meta["length"] == 3
+    assert meta["top_sites"][0]["position"] == 2  # the 0.9 peak
+
+def test_ensure_meta_survives_uniprot_failure(tmp_path, monkeypatch):
+    import urllib.error
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"; d.mkdir()
+    (d / "Q9W7E7_score.csv").write_text("position,min,aa\n1,0.5,M\n")
+    def boom(q): raise urllib.error.URLError("offline")
+    monkeypatch.setattr(pipeline.uniprot, "search", boom)
+    pipeline.ensure_meta("Q9W7E7")
+    meta = parsing.read_meta("Q9W7E7")
+    assert meta["uniprot_id"] == "Q9W7E7" and meta["gene"] == ""
+
+def test_jobs_run_one_at_a_time(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "result_exists", lambda *a, **k: False)
+    started = threading.Event(); release = threading.Event(); running = []
+    def fake_run_job(job_id, uid, custom_structure=None, n_terminal=None):
+        running.append(job_id)
+        started.set()
+        release.wait(5)
+        running.remove(job_id)
+        pipeline.JobStore.set_status(job_id, "done")
+    monkeypatch.setattr(pipeline, "run_job", fake_run_job)
+    j1 = pipeline.JobStore.create("AAA")
+    pipeline.enqueue_job(j1, "AAA")
+    assert started.wait(5)
+    j2 = pipeline.JobStore.create("BBB")
+    pipeline.enqueue_job(j2, "BBB")
+    time.sleep(0.3)
+    assert running == [j1]                                    # second job not started
+    assert pipeline.JobStore.get(j2)["status"] == "queued"
+    # re-submitting the in-flight job must not clobber or duplicate it
+    assert pipeline.JobStore.create("AAA") == j1
+    pipeline.enqueue_job(j1, "AAA")
+    assert pipeline.JobStore.get(j1)["status"] == "running"
+    release.set()
+    for _ in range(50):
+        if pipeline.JobStore.get(j2)["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert pipeline.JobStore.get(j2)["status"] == "done"
+```
+
+```python
+# tests/web/test_app.py (append — add `from web import pipeline` to the imports)
+def test_run_endpoint_accepts_multipart(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "result_exists", lambda *a, **k: True)
+    monkeypatch.setattr(pipeline, "ensure_meta", lambda *a, **k: None)
+    client = TestClient(app_module.app)
+    resp = client.post("/api/run", data={"uniprot_id": "Q9W7E7"})
+    assert resp.status_code == 200
+    assert resp.json()["job_id"].startswith("Q9W7E7-")
+
+def test_results_404_for_unknown_id():
+    client = TestClient(app_module.app)
+    assert client.get("/api/results/NOPE/score").status_code == 404
+    assert client.get("/api/results/NOPE/msa").status_code == 404
+    assert client.get("/api/results/NOPE/info").status_code == 404
+
+def test_unknown_job_404():
+    client = TestClient(app_module.app)
+    assert client.get("/api/jobs/NOPE").status_code == 404
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `PYTHONPATH=. .venv/bin/python -m pytest tests/web -q`
+Expected: FAIL — new tests fail against current code (e.g. `test_run_endpoint_accepts_multipart`
+gets 422, 404 tests get 200, `test_compute_top_sites_detects_distinct_peaks` gets `[2, 3]`,
+`test_run_job_*` fail on missing `Popen` fake plumbing).
+
+- [ ] **Step 3: Rewrite `web/parsing.py`**
+
+```python
+# web/parsing.py (full replacement)
+import csv
+import json
+from pathlib import Path
+from web import config
+
+NUMERIC_COLS = {"position", "normalized_entropy", "ss_score", "rsa", "inv_anchor2",
+                "sum_score", "min", "shannon", "resnum", "sasa", "phi", "psi",
+                "iupred2", "anchor2"}
+
+def _num(v):
+    """Coerce an R write.csv(..., as.character) cell: NA/blank -> None, else number."""
+    if v is None:
+        return None
+    v = str(v).strip()
+    if v in ("", "NA", "NaN", "nan"):
+        return None
+    try:
+        f = float(v)
+    except ValueError:
+        return v
+    return int(f) if f.is_integer() else f
+
+def parse_score_csv(path) -> list[dict]:
+    with Path(path).open() as fh:
+        return [{k: (_num(v) if k in NUMERIC_COLS else v) for k, v in r.items()}
+                for r in csv.DictReader(fh)]
+
+def parse_msa(path) -> dict:
+    path = Path(path)
+    records, current_id, seqs = [], None, []
+    for line in path.read_text().splitlines():
+        if line.startswith(">"):
+            if current_id is not None:
+                records.append({"id": current_id, "seq": "".join(seqs)})
+            current_id = line[1:].split()[0]
+            seqs = []
+        elif line.strip():
+            seqs.append(line.strip())
+    if current_id is not None:
+        records.append({"id": current_id, "seq": "".join(seqs)})
+    return {"records": records, "query": records[0]["id"] if records else ""}
+
+def compute_top_sites(rows: list[dict], n: int = 5) -> list[dict]:
+    """Top N local maxima of the `min` score: a residue qualifies only if its `min`
+    strictly exceeds both neighbours, so sites are distinct peaks rather than
+    adjacent residues of one peak. MUST mirror webui/src/chart.ts topSites."""
+    mins = [float(r.get("min") or 0) for r in rows]
+    peaks = []
+    for i, m in enumerate(mins):
+        left = mins[i - 1] if i > 0 else float("-inf")
+        right = mins[i + 1] if i < len(mins) - 1 else float("-inf")
+        if m > left and m > right:
+            r = rows[i]
+            peaks.append({"position": int(r["position"]), "min": m,
+                          "min_feature": r.get("min_feature", "")})
+    peaks.sort(key=lambda p: p["min"], reverse=True)
+    return peaks[:n]
+
+def _meta_path(uniprot_id: str) -> Path:
+    return config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_meta.json"
+
+def write_meta(uniprot_id: str, **fields):
+    p = _meta_path(uniprot_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(fields, indent=2))
+
+def read_meta(uniprot_id: str) -> dict | None:
+    p = _meta_path(uniprot_id)
+    return json.loads(p.read_text()) if p.exists() else None
+```
+
+- [ ] **Step 4: Rewrite `web/uniprot.py`**
+
+```python
+# web/uniprot.py (full replacement)
+import json
+import logging
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+from resolve_accessions import resolve_one  # noqa: E402
+
+UNIPROT_API = "https://rest.uniprot.org/uniprotkb/search"
+log = logging.getLogger(__name__)
+
+def _get_json(url, params=None):
+    if params:
+        url = url + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+def search(term: str) -> list[dict]:
+    term = (term or "").strip()
+    if not term:
+        return []
+    params = {"query": term,
+              "fields": "accession,id,gene_names,organism_name,reviewed,xref_alphafolddb",
+              "format": "json", "size": "20"}
+    data = None
+    for attempt in (1, 2):  # one retry for network blips (spec §5); then empty, never 500
+        try:
+            data = _get_json(UNIPROT_API, params=params)
+            break
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            log.warning("UniProt search attempt %d failed: %s", attempt, e)
+            if attempt == 2:
+                return []
+            time.sleep(1)
+    out = []
+    for r in (data or {}).get("results", []):
+        af = any(x.get("database") == "AlphaFoldDB" for x in r.get("uniProtKBCrossReferences", []))
+        gene = ""
+        if r.get("genes"):
+            gene = r["genes"][0].get("geneName", {}).get("value", "")
+        out.append({
+            "accession": r.get("primaryAccession", ""),
+            "gene": gene,
+            "organism": r.get("organism", {}).get("scientificName", ""),
+            "reviewed": str(r.get("entryType", "")).startswith("UniProtKB reviewed"),
+            "hasAlphaFold": af,
+        })
+    return out
+
+def resolve(accessions: list[str]) -> list[dict]:
+    return [resolve_one(acc) for acc in accessions]
+```
+
+- [ ] **Step 5: Rewrite `web/pipeline.py`**
+
+```python
+# web/pipeline.py (full replacement)
+import hashlib
+import os
+import queue
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+from web import config, parsing, uniprot
+
+JOBS: dict[str, dict] = {}
+_LOCK = threading.Lock()
+_QUEUE: queue.Queue = queue.Queue()
+_ACTIVE: set[str] = set()
+_WORKER_STARTED = False
+RUN_TIMEOUT_S = 1800
+
+def _out_dir(uniprot_id: str) -> Path:
+    return config.OUTPUTS_DIR / uniprot_id
+
+def _result_links(uniprot_id: str) -> dict:
+    return {"score": f"/api/results/{uniprot_id}/score",
+            "msa": f"/api/results/{uniprot_id}/msa",
+            "info": f"/api/results/{uniprot_id}/info"}
+
+def result_exists(uniprot_id: str, custom_structure: str | None = None) -> bool:
+    score = _out_dir(uniprot_id) / f"{uniprot_id}_score.csv"
+    if not score.exists():
+        return False
+    if custom_structure:
+        sidecar = _out_dir(uniprot_id) / "custom_structure.txt"
+        if not sidecar.exists() or sidecar.read_text().strip() != custom_structure:
+            return False
+    return True
+
+def build_command(uniprot_id: str, custom_structure: str | None = None,
+                  n_terminal: int | None = None) -> list[str]:
+    cmd = ["Rscript", str(config.R_SCRIPT), uniprot_id]
+    if custom_structure:
+        cmd.append(custom_structure)
+        if n_terminal is not None:
+            cmd.append(str(n_terminal))
+    return cmd
+
+def make_job_id(uniprot_id: str, custom_structure=None, n_terminal=None) -> str:
+    # Deterministic: hash() is salted per process (PYTHONHASHSEED), which would
+    # defeat dedupe across restarts and make job ids unstable.
+    key = f"{uniprot_id}|{custom_structure}|{n_terminal}"
+    return f"{uniprot_id}-{hashlib.sha256(key.encode()).hexdigest()[:12]}"
+
+class JobStore:
+    @staticmethod
+    def create(uniprot_id, custom_structure=None, n_terminal=None) -> str:
+        job_id = make_job_id(uniprot_id, custom_structure, n_terminal)
+        with _LOCK:
+            existing = JOBS.get(job_id)
+            if existing and existing.get("status") in ("queued", "running"):
+                return job_id  # identical job already in flight; keep it
+            JOBS[job_id] = {"status": "queued", "uniprot_id": uniprot_id,
+                            "custom_structure": custom_structure,
+                            "n_terminal": n_terminal, "progress": ""}
+        return job_id
+
+    @staticmethod
+    def get(job_id: str) -> dict:
+        with _LOCK:
+            return dict(JOBS.get(job_id, {}))
+
+    @staticmethod
+    def set_status(job_id: str, status: str, **extra):
+        with _LOCK:
+            JOBS.setdefault(job_id, {})
+            JOBS[job_id]["status"] = status
+            JOBS[job_id].update(extra)
+
+def ensure_meta(uniprot_id: str, custom_structure=None, n_terminal=None,
+                resolution_note: str = ""):
+    """(Re)write outputs/<ID>/<ID>_meta.json so /api/results/<id>/info always
+    resolves — for fresh runs and results reused from disk (goal #7).
+    Idempotent; a UniProt outage must not fail the job."""
+    out = _out_dir(uniprot_id)
+    rows = parsing.parse_score_csv(out / f"{uniprot_id}_score.csv")
+    meta = {
+        "uniprot_id": uniprot_id,
+        "length": len(rows),
+        "top_sites": parsing.compute_top_sites(rows),
+        "resolution_note": resolution_note,
+        "custom_structure": custom_structure,
+        "n_terminal": n_terminal,
+        "gene": "", "organism": "", "reviewed": None, "hasAlphaFold": None,
+    }
+    try:
+        hits = uniprot.search(uniprot_id)
+        hit = next((h for h in hits if h["accession"] == uniprot_id),
+                   hits[0] if hits else None)
+        if hit:
+            meta.update({"gene": hit["gene"], "organism": hit["organism"],
+                         "reviewed": hit["reviewed"], "hasAlphaFold": hit["hasAlphaFold"]})
+    except Exception:  # noqa: BLE001
+        pass
+    parsing.write_meta(uniprot_id, **meta)
+
+def run_job(job_id: str, uniprot_id: str, custom_structure=None, n_terminal=None):
+    out = _out_dir(uniprot_id)
+    out.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ)
+    env["EPICTORE_OUTDIR"] = str(out)
+    if custom_structure:
+        (out / "custom_structure.txt").write_text(custom_structure)
+    cmd = build_command(uniprot_id, custom_structure, n_terminal)
+    log_path = out / "run.log"
+    try:
+        proc = subprocess.Popen(
+            cmd, cwd=str(config.APP_DIR), env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        deadline = time.time() + RUN_TIMEOUT_S
+        with log_path.open("w") as log:
+            while True:
+                line = proc.stdout.readline()
+                if line:
+                    log.write(line)
+                    log.flush()
+                    JobStore.set_status(job_id, "running", progress=line.strip()[-200:])
+                elif proc.poll() is not None:
+                    break
+                elif time.time() > deadline:
+                    proc.kill()
+                    raise TimeoutError(f"pipeline exceeded {RUN_TIMEOUT_S}s")
+                else:
+                    time.sleep(0.2)
+        if proc.returncode != 0:
+            JobStore.set_status(job_id, "error", error=log_path.read_text()[-2000:])
+            return
+        missing = [f for f in (f"{uniprot_id}_score.csv", f"{uniprot_id}_msa.fasta")
+                   if not (out / f).exists()]
+        if missing:
+            JobStore.set_status(job_id, "error",
+                                error=f"pipeline exited 0 but did not produce: {', '.join(missing)}")
+            return
+        ensure_meta(uniprot_id, custom_structure, n_terminal)
+        JobStore.set_status(job_id, "done", progress="", result=_result_links(uniprot_id))
+    except Exception as e:  # noqa: BLE001
+        JobStore.set_status(job_id, "error", error=str(e))
+
+def _worker():
+    # Single-flight runner (spec §4.3): BLAST is heavy — one R job at a time.
+    while True:
+        job_id = _QUEUE.get()
+        try:
+            job = JobStore.get(job_id)
+            JobStore.set_status(job_id, "running")
+            run_job(job_id, job["uniprot_id"], job.get("custom_structure"),
+                    job.get("n_terminal"))
+        finally:
+            with _LOCK:
+                _ACTIVE.discard(job_id)
+            _QUEUE.task_done()
+
+def _ensure_worker():
+    global _WORKER_STARTED
+    with _LOCK:
+        if not _WORKER_STARTED:
+            threading.Thread(target=_worker, daemon=True).start()
+            _WORKER_STARTED = True
+
+def enqueue_job(job_id: str, uniprot_id: str, custom_structure=None, n_terminal=None):
+    with _LOCK:
+        if job_id in _ACTIVE:
+            return  # identical job already queued/running
+        _ACTIVE.add(job_id)
+    if result_exists(uniprot_id, custom_structure):
+        ensure_meta(uniprot_id, custom_structure, n_terminal)
+        JobStore.set_status(job_id, "done", result=_result_links(uniprot_id))
+        with _LOCK:
+            _ACTIVE.discard(job_id)
+        return
+    JobStore.set_status(job_id, "queued")
+    _ensure_worker()
+    _QUEUE.put(job_id)
+```
+
+- [ ] **Step 6: Rewrite `web/app.py`**
+
+```python
+# web/app.py (full replacement)
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+from web import config, parsing, pipeline, uniprot
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # The docker entrypoint owns background install.R; the app only reports state.
+    yield
+
+app = FastAPI(title="EpicTope", lifespan=lifespan)
+
+@app.get("/api/status")
+def status():
+    progress = ""
+    if config.INSTALL_LOG.exists():
+        text = config.INSTALL_LOG.read_text().strip()
+        if text:
+            progress = text.splitlines()[-1]
+    return {"installed": config.INSTALL_MARKER.exists(), "progress": progress}
+
+class ResolveReq(BaseModel):
+    accessions: list[str]
+
+@app.get("/api/search")
+def search(q: str = ""):
+    return uniprot.search(q)
+
+@app.post("/api/resolve")
+def resolve(req: ResolveReq):
+    return uniprot.resolve(req.accessions)
+
+# multipart/form-data (the .cif upload cannot ride in a JSON body). Flat Form
+# fields only — a Pydantic body model combined with File() makes every request
+# fail validation with 422.
+@app.post("/api/run")
+async def run(uniprot_id: str = Form(...),
+              n_terminal: int | None = Form(None),
+              custom_structure: UploadFile | None = File(None)):
+    path = None
+    if custom_structure:
+        import pathlib, tempfile, uuid
+        safe_name = pathlib.Path(custom_structure.filename or "").name or "structure.cif"
+        p = pathlib.Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{safe_name}"
+        p.write_bytes(await custom_structure.read())
+        path = str(p)
+    job_id = pipeline.JobStore.create(uniprot_id, path, n_terminal)
+    pipeline.enqueue_job(job_id, uniprot_id, path, n_terminal)
+    return {"job_id": job_id}
+
+@app.get("/api/jobs/{job_id}")
+def job(job_id: str):
+    state = pipeline.JobStore.get(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="unknown job id")
+    return state
+
+@app.get("/api/results/{uniprot_id}/score")
+def result_score(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_score.csv"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="no score result for this ID")
+    return parsing.parse_score_csv(p)
+
+@app.get("/api/results/{uniprot_id}/msa")
+def result_msa(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_msa.fasta"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="no MSA result for this ID")
+    return parsing.parse_msa(p)
+
+@app.get("/api/results/{uniprot_id}/info")
+def result_info(uniprot_id: str):
+    meta = parsing.read_meta(uniprot_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="no metadata for this ID")
+    return meta
+```
+
+- [ ] **Step 7: Update `web/requirements.txt`**
+
+```text
+# web/requirements.txt (full replacement)
+fastapi
+uvicorn[standard]
+python-multipart
+pytest
+httpx
+```
+
+- [ ] **Step 8: Run tests to verify they pass**
+
+Run: `PYTHONPATH=. .venv/bin/python -m pytest tests/web -q`
+Expected: PASS (all ~25 tests).
+Then re-probe the endpoint behaviour that failed review:
+```bash
+PYTHONPATH=. .venv/bin/python - <<'EOF'
+from fastapi.testclient import TestClient
+from web import app as app_module, pipeline
+pipeline.enqueue_job = lambda *a, **k: None
+c = TestClient(app_module.app)
+r = c.post("/api/run", data={"uniprot_id": "Q9W7E7"})
+assert r.status_code == 200, r.text          # was 422
+r = c.get("/api/results/NOPE/score")
+assert r.status_code == 404, r.text          # was 200 with [body, status] array
+print("probe OK")
+EOF
+```
+Expected: `probe OK`.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add web/app.py web/pipeline.py web/parsing.py web/uniprot.py web/requirements.txt \
+        tests/web/test_app.py tests/web/test_pipeline.py tests/web/test_parsing.py tests/web/test_uniprot.py
+git commit -m "fix(web): repair run endpoint, error codes, and job runner before frontend work
+
+Review of the Tasks 1-5 implementation (built with a weaker model) found
+defects the frontend tasks depend on; correct them before proceeding:
+
+- /api/run 422'd every request (Pydantic body + File can't mix) - use
+  multipart Form fields, matching api.ts FormData and the smoke test.
+- Results/job 404s returned HTTP 200 with a [body, status] array - raise
+  HTTPException instead.
+- enqueue_job spawned one thread per job - replace with a single-flight
+  queue worker (spec: one R/BLAST run at a time), deterministic sha256
+  job ids, and dedupe of in-flight submissions.
+- Stream R output to outputs/<ID>/run.log and expose it as job progress;
+  verify score/MSA outputs actually exist after exit code 0.
+- Write meta JSON on cache hits and run success via ensure_meta so
+  /api/results/{id}/info resolves for disk-reused results.
+- compute_top_sites now returns distinct local maxima, not adjacent
+  residues of one peak; parse_score_csv coerces numeric columns, NA->null.
+- uniprot.search retries once then returns [] instead of 500ing, and
+  short-circuits empty queries.
+- Add missing python-multipart to web/requirements.txt."
+```
+
+---
+
 ## Task 6: Frontend scaffold (Vite + TS) and score chart
 
 **Files:**
@@ -666,19 +1494,35 @@ git commit -m "feat(web): results endpoints (score, msa, info) with top-site com
 **Interfaces:**
 - `api.ts`: `fetchSearch(q)`, `fetchResolve(accs)`, `runPrediction({uniprot_id, n_terminal, file})`, `fetchJob(id)`, `fetchScore(id)`, `fetchMsa(id)`, `fetchInfo(id)`.
 - `types.ts`: `ScoreRow`, `Msa`, `Info`, `Job`.
-- `chart.ts`: `renderScoreChart(canvas, rows, topSites)` using Chart.js; returns `{chart, setHoverCallback, highlight}`; `topSites(rows, n)` exported.
-- Static mount: `app.mount("/", StaticFiles(directory=config.APP_DIR/"web"/"static", html=True), name="static")`.
+- `chart.ts`: `renderScoreChart(canvas, rows, topSites)` using Chart.js; returns `{chart, setHoverCallback, highlight}`; `topSites(rows, n)` exported. Feature tracks are drawn **raw** (goal #5: spikes must sit exactly on their residue); `min` is emphasized and gets an additional dashed rolling-window-7 smoothed overlay via `movingAverage` (mirrors `moving_average(plot_data$min_val, 7)` in `scripts/plot_scores.R`). **Vertical annotations** at the top candidate positions. `topSites` MUST use the same **local-maxima** logic as `parsing.compute_top_sites` (corrected in Task 5.5), not a plain top-N sort.
+- Static mount: `app.mount("/", StaticFiles(directory=config.APP_DIR/"web"/"static", html=True, check_dir=False), name="static")` — `check_dir=False` so backend tests still import the app locally before the first frontend build.
+- `npm install` generates `webui/package-lock.json`; **commit it** (Task 10's Docker build uses `npm ci`).
 
 - [ ] **Step 1: Write the failing test**
 ```ts
 // webui/test/score.test.ts
 import { describe, it, expect } from "vitest";
-import { topSites } from "../src/chart";
+import { topSites, movingAverage } from "../src/chart";
 
 describe("topSites", () => {
-  it("returns highest min positions", () => {
+  it("returns the single highest peak", () => {
     const rows = [{ position: 1, min: 0.1 }, { position: 2, min: 0.9 }, { position: 3, min: 0.5 }];
     expect(topSites(rows as any, 1).map(s => s.position)).toEqual([2]);
+  });
+  it("detects distinct local maxima, not adjacent residues", () => {
+    const rows = [
+      { position: 1, min: 0.1 }, { position: 2, min: 0.9 }, { position: 3, min: 0.8 },
+      { position: 4, min: 0.2 }, { position: 5, min: 0.85 }, { position: 6, min: 0.7 },
+    ];
+    // peaks at 2 (0.9) and 5 (0.85); position 3 is not a peak
+    expect(topSites(rows as any, 2).map(s => s.position)).toEqual([2, 5]);
+  });
+});
+
+describe("movingAverage", () => {
+  it("averages within a centered window", () => {
+    const rows = [1, 2, 3, 4, 5].map((x, i) => ({ position: i + 1, min: x }));
+    expect(movingAverage(rows as any, "min", 3)[2]).toBeCloseTo(3); // mean(2,3,4)
   });
 });
 ```
@@ -701,7 +1545,7 @@ Expected: FAIL — file not found / `topSites` not exported.
     "preview": "vite preview",
     "test": "vitest run"
   },
-  "dependencies": { "chart.js": "^4.4.0" },
+  "dependencies": { "chart.js": "^4.4.0", "chartjs-plugin-annotation": "^3.0.0" },
   "devDependencies": { "typescript": "^5.4.0", "vite": "^5.2.0", "vitest": "^1.5.0" }
 }
 ```
@@ -750,40 +1594,105 @@ export const fetchInfo = (id: string) => fetch(`/api/results/${id}/info`).then(J
 ```ts
 // webui/src/chart.ts
 import { Chart, LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale } from "chart.js";
-Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale);
+import annotationPlugin from "chartjs-plugin-annotation";
+Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, annotationPlugin);
 
 export interface TopSite { position: number; min: number; min_feature: string; }
+
+// Local-maxima peak detection — MUST match web/parsing.compute_top_sites (Task 5.5):
+// a residue is a candidate only if its `min` strictly exceeds both neighbours.
 export function topSites(rows: any[], n = 5): TopSite[] {
-  return [...rows].sort((a,b)=>Number(b.min)-Number(a.min)).slice(0,n)
-    .map(r=>({ position: Number(r.position), min: Number(r.min), min_feature: r.min_feature }));
+  const peaks: TopSite[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const m = Number(rows[i].min);
+    const left = i === 0 ? -Infinity : Number(rows[i - 1].min);
+    const right = i === rows.length - 1 ? -Infinity : Number(rows[i + 1].min);
+    if (m > left && m > right) {
+      peaks.push({ position: Number(rows[i].position), min: m, min_feature: rows[i].min_feature });
+    }
+  }
+  return peaks.sort((a, b) => b.min - a.min).slice(0, n);
 }
-let hoverCb: ((pos: number|null)=>void) | null = null;
-export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[]) {
-  const labels = rows.map(r=>r.position);
-  const mk = (key:string, color:string, hidden=false) => ({
-    label: key, data: rows.map(r=>Number(r[key])), borderColor: color,
-    backgroundColor: color, hidden, pointRadius: 0, borderWidth: 1.5, tension: 0.2 });
+
+// Symmetric, edge-capped moving average — mirrors R `moving_average` in plot_scores.R (window 7).
+export function movingAverage(rows: any[], key: string, window = 7): number[] {
+  const xs = rows.map(r => Number(r[key]));
+  const n = xs.length;
+  const half = Math.floor(window / 2);
+  const out: number[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const lo = Math.max(0, i - half), hi = Math.min(n - 1, i + half);
+    let sum = 0;
+    for (let j = lo; j <= hi; j++) sum += xs[j];
+    out[i] = sum / (hi - lo + 1);
+  }
+  return out;
+}
+
+let hoverCb: ((pos: number | null) => void) | null = null;
+
+// Index of the emphasized raw `min` dataset; highlight() pins tooltips to it.
+export const MIN_DATASET_INDEX = 5;
+
+// `top` is the precomputed TopSite[] (from topSites) used for vertical annotations.
+// All tracks are drawn RAW so spikes land exactly on their residue (goal #5);
+// the only smoothed line is the dashed `min` overlay mirroring plot_scores.R.
+export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]) {
+  const labels = rows.map(r => Number(r.position));
+  const raw = (key: string, color: string, width = 1) => ({
+    label: key,
+    data: rows.map(r => Number(r[key])),
+    borderColor: color,
+    backgroundColor: color,
+    pointRadius: 0,
+    borderWidth: width,
+    tension: 0.15,
+  });
   const chart = new Chart(canvas, {
     type: "line",
     data: { labels, datasets: [
-      mk("normalized_entropy","#888"), mk("ss_score","#2a9d8f"),
-      mk("rsa","#e9c46a"), mk("inv_anchor2","#e76f51"),
-      mk("sum_score","#457b9d"), mk("min","#d62828") ] },
-    options: { parsing:false,
-      scales: { x: { type:"linear", title:{display:true,text:"Amino acid position"} },
-                y: { title:{display:true,text:"Score (0-1)"} } },
-      plugins: { tooltip: { callbacks: {
-        title: (items)=>`Position ${rows[items[0].dataIndex].position} (${rows[items[0].dataIndex].aa})`,
-        label: (it)=>`${it.dataset.label}: ${it.formattedValue}` } } },
-      onHover: (_, els) => { if (hoverCb) hoverCb(els.length ? rows[els[0].index].position : null); } }
+      raw("normalized_entropy", "#888"), raw("ss_score", "#2a9d8f"),
+      raw("rsa", "#e9c46a"), raw("inv_anchor2", "#e76f51"),
+      raw("sum_score", "#457b9d"),
+      raw("min", "#d62828", 2.5),  // index 5 = MIN_DATASET_INDEX (emphasized)
+      { label: "min (smoothed)", data: movingAverage(rows, "min", 7),
+        borderColor: "#7f1d1d", backgroundColor: "#7f1d1d",
+        borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
+    ] },
+    options: {
+      parsing: false,
+      scales: {
+        x: { type: "linear", title: { display: true, text: "Amino acid position" } },
+        y: { title: { display: true, text: "Score (0-1)" } },
+      },
+      plugins: {
+        tooltip: { callbacks: {
+          title: (items) => { const r = rows[items[0].dataIndex];
+            return `Position ${r.position} (${r.aa}) · min ${r.min}`; },
+          label: (it) => `${it.dataset.label}: ${it.formattedValue}`,
+        } },
+        annotation: { annotations: Object.fromEntries(
+          top.map((s, i) => [`top${i}`, {
+            type: "line", scaleID: "x", value: s.position,
+            borderColor: "#d62828", borderWidth: 1, borderDash: [4, 4],
+            label: { display: true, content: `#${s.position}`, position: "start" },
+          }])) },
+        },
+      },
+      onHover: (_, els) => { if (hoverCb) hoverCb(els.length ? rows[els[0].index].position : null); },
+    },
   });
-  return { chart, setHoverCallback:(cb:any)=>{ hoverCb = cb; }, highlight:(pos:number|null)=>{
-    const idx = pos==null ? -1 : rows.map(r=>Number(r.position)).indexOf(pos);
-    const ae = idx<0 ? [] : [{datasetIndex:5,index:idx}];
-    chart.setActiveElements(ae);
-    chart.tooltip?.setActiveElements(ae);
-    chart.update();
-  } };
+  return {
+    chart,
+    setHoverCallback: (cb: (pos: number | null) => void) => { hoverCb = cb; },
+    highlight: (pos: number | null) => {
+      const idx = pos == null ? -1 : rows.map(r => Number(r.position)).indexOf(pos);
+      const ae = idx < 0 ? [] : [{ datasetIndex: MIN_DATASET_INDEX, index: idx }];
+      chart.setActiveElements(ae);
+      chart.tooltip?.setActiveElements(ae);
+      chart.update();
+    },
+  };
 }
 ```
 ```html
@@ -814,7 +1723,7 @@ export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[]) {
 ```ts
 // webui/src/main.ts (minimal wiring; sequence/msa filled in later tasks)
 import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo } from "./api";
-import { renderScoreChart } from "./chart";
+import { renderScoreChart, topSites } from "./chart";
 const $ = (id:string)=>document.getElementById(id)!;
 let chartHandle: any = null;
 
@@ -848,7 +1757,7 @@ async function showResults(acc:string) {
      <p>${info.gene} — ${info.organism}</p>
      <p>Top sites: ${info.top_sites.map((s:any)=>s.position).join(", ")}</p>`;
   if (chartHandle) chartHandle.chart.destroy();
-  chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows);
+  chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
 }
 ```
 ```css
@@ -864,7 +1773,10 @@ canvas{max-width:100%}
 ```python
 # web/app.py — add at end
 from fastapi.staticfiles import StaticFiles
-app.mount("/", StaticFiles(directory=str(config.APP_DIR / "web" / "static"), html=True), name="static")
+# check_dir=False: web/static doesn't exist until the first frontend build, and
+# the backend test suite imports this app before then.
+app.mount("/", StaticFiles(directory=str(config.APP_DIR / "web" / "static"),
+                           html=True, check_dir=False), name="static")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -873,7 +1785,7 @@ Expected: PASS. (Also `cd /app && PYTHONPATH=/app python -m pytest tests/web -q`
 
 - [ ] **Step 5: Commit**
 ```bash
-git add webui web/app.py
+git add webui web/app.py   # includes webui/package-lock.json (Task 10 runs npm ci)
 git commit -m "feat(webui): Vite+TS scaffold and Chart.js score chart"
 ```
 
@@ -975,17 +1887,23 @@ git commit -m "feat(webui): linked hover between chart and sequence strip"
 
 **Interfaces:**
 - `colorForColumn(seqs: string[], col: number): "red"|"blue"|"yellow"` — yellow if any char is `-`; else red if all equal; else blue.
-- `renderMsa(el, msa)` builds a grid; hovering a column calls `bus.setActive(position)` (column+1); subscribes to `bus` to highlight active column.
+- `renderMsa(el, msa)` builds a grid; hovering a column calls `bus.setActive(position)` where `position` is the **true query residue number** for that column (gap-aware via `queryPositions`), so the chart link stays correct even when the MSA contains gaps; subscribes to `bus` to highlight the active column.
 
 - [ ] **Step 1: Write the failing test**
 ```ts
 // webui/test/msa.test.ts
 import { describe, it, expect } from "vitest";
-import { colorForColumn } from "../src/msa";
+import { colorForColumn, queryPositions } from "../src/msa";
 describe("colorForColumn", () => {
   it("red when all identical", () => expect(colorForColumn(["A","A","A"],0)).toBe("red"));
   it("blue when differing", () => expect(colorForColumn(["A","C","A"],0)).toBe("blue"));
   it("yellow when gap present", () => expect(colorForColumn(["A","-","A"],0)).toBe("yellow"));
+});
+describe("queryPositions", () => {
+  it("maps gap-containing query columns to residue numbers", () => {
+    const msa = { query: "A", records: [{ id: "A", seq: "A-C" }] };
+    expect(queryPositions(msa as any)).toEqual([1, null, 2]);
+  });
 });
 ```
 
@@ -1004,11 +1922,23 @@ export function colorForColumn(seqs: string[], col: number): CellColor {
   if (chars.every(c => c === chars[0])) return "red";
   return "blue";
 }
-export function renderMsa(el: HTMLElement, msa: { records: {id:string;seq:string}[] }) {
+// True query residue number per MSA column (counts non-gap chars in the query row),
+// so hover links to the chart by real residue position even when gaps exist.
+export function queryPositions(msa: { query: string; records: { id: string; seq: string }[] }): (number|null)[] {
+  const q = (msa.records.find(r => r.id === msa.query) ?? msa.records[0])?.seq ?? "";
+  let count = 0;
+  return q.split("").map(ch => {
+    if (ch === "-") return null;
+    count += 1;
+    return count;
+  });
+}
+export function renderMsa(el: HTMLElement, msa: { query: string; records: { id: string; seq: string }[] }) {
   const seqs = msa.records.map(r => r.seq);
+  const qpos = queryPositions(msa);
   el.innerHTML = "";
   const head = document.createElement("div"); head.className = "msahead";
-  head.textContent = "MSA (red=conserved, blue=differs, yellow=gap) — hover links to chart";
+  head.textContent = "MSA (red=conserved, blue=differs, yellow=gap) — hover links to chart by residue";
   el.appendChild(head);
   msa.records.forEach(rec => {
     const row = document.createElement("div"); row.className = "msarow";
@@ -1017,16 +1947,16 @@ export function renderMsa(el: HTMLElement, msa: { records: {id:string;seq:string
     const strip = document.createElement("span"); strip.className="msastrip";
     for (let c=0;c<rec.seq.length;c++){
       const s=document.createElement("span"); s.className=`cell ${colorForColumn(seqs,c)}`;
-      s.dataset.col=String(c); s.textContent=rec.seq[c];
-      s.onmouseenter=()=>bus.setActive(c+1); s.onmouseleave=()=>bus.setActive(null);
+      s.dataset.pos=String(qpos[c] ?? ""); s.textContent=rec.seq[c];
+      s.onmouseenter=()=>bus.setActive(qpos[c]); s.onmouseleave=()=>bus.setActive(null);
       strip.appendChild(s);
     }
     row.appendChild(strip); el.appendChild(row);
   });
   bus.onActive(pos => {
     el.querySelectorAll(".cell").forEach(n=>{
-      (n as HTMLElement).classList.toggle("active",
-        pos!=null && Number((n as HTMLElement).dataset.col)+1===pos);
+      const p=(n as HTMLElement).dataset.pos;
+      (n as HTMLElement).classList.toggle("active", pos!=null && p!=="" && Number(p)===pos);
     });
   });
 }
@@ -1094,28 +2024,19 @@ Expected: FAIL — `AttributeError: module 'web.pipeline' has no attribute 'fina
 
 - [ ] **Step 3: Write minimal implementation**
 ```python
-# web/pipeline.py — add imports + function (keep existing content)
+# web/pipeline.py — finalize_meta wraps ensure_meta (added in Task 5.5).
+# ensure_meta already reads the score CSV, computes top sites (local maxima via
+# parsing.compute_top_sites), queries uniprot.search, and writes <ID>_meta.json.
+# Here we just expose the public name run_job calls and guarantee resolution_note
+# is applied. (Do NOT re-implement the logic — it lives in ensure_meta.)
 from web import parsing, uniprot
 
 def finalize_meta(uniprot_id: str, custom_structure=None, n_terminal=None, resolution_note: str = ""):
-    rows = parsing.parse_score_csv(config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_score.csv")
-    top = parsing.compute_top_sites(rows, n=5)
-    seq = "".join(r.get("aa","") for r in rows)
-    meta = {"uniprot_id": uniprot_id, "length": len(rows), "sequence": seq,
-            "top_sites": top, "resolution_note": resolution_note,
-            "gene": "", "organism": "", "reviewed": False, "hasAlphaFold": False}
-    try:
-        found = uniprot.search(uniprot_id)
-        if found:
-            f = found[0]; meta.update(gene=f["gene"], organism=f["organism"],
-                                      reviewed=f["reviewed"], hasAlphaFold=f["hasAlphaFold"])
-    except Exception:
-        pass
-    parsing.write_meta(uniprot_id, **meta)
-    return meta
+    return ensure_meta(uniprot_id, custom_structure, n_terminal, resolution_note)
 ```
 ```python
-# web/pipeline.py — in run_job, just BEFORE JobStore.set_status(job_id, "done", ...):
+# web/pipeline.py — in run_job, change the Task 5.5 `ensure_meta(...)` call to the
+# public name (same effect; finalize_meta delegates to ensure_meta):
     finalize_meta(uniprot_id, custom_structure, n_terminal)
 ```
 ```ts
@@ -1145,15 +2066,19 @@ export function renderTable(el: HTMLElement, rows: any[]) {
     <table class="ft"><thead><tr>${cols.map(c=>`<th>${c}</th>`).join("")}</tr></thead>
     <tbody></tbody></table>`;
   const tbody = el.querySelector("tbody")!;
-  const draw = (data:any[]) => { tbody.innerHTML = data.map(r=>`<tr>${cols.map(c=>`<td>${r[c]}</td>`).join("")}</tr>`).join(""); };
+  // Rows carry data-pos so the linked highlight survives filtering (index-based
+  // mapping would point at the wrong residues after the tbody is re-drawn).
+  const draw = (data:any[]) => { tbody.innerHTML = data.map(r=>
+    `<tr data-pos="${r.position}">${cols.map(c=>`<td>${r[c]}</td>`).join("")}</tr>`).join(""); };
   draw(rows);
   (el.querySelector("#ftFilter") as HTMLInputElement).oninput = (e)=>{
     const v=(e.target as HTMLInputElement).value.toLowerCase();
     draw(rows.filter(r=>cols.some(c=>String(r[c]).toLowerCase().includes(v))));
   };
   bus.onActive(pos=>{
-    tbody.querySelectorAll("tr").forEach((tr,i)=>{
-      (tr as HTMLElement).style.background = (pos!=null && rows[i] && Number(rows[i].position)===pos)?"#ffd166":"";
+    tbody.querySelectorAll("tr[data-pos]").forEach(tr=>{
+      (tr as HTMLElement).style.background =
+        (pos!=null && Number((tr as HTMLElement).dataset.pos)===pos)?"#ffd166":"";
     });
   });
 }
@@ -1231,7 +2156,7 @@ Expected: FAIL — image build fails (Dockerfile not yet multi-stage / no python
 FROM node:20 AS frontend
 WORKDIR /src
 COPY webui/package.json webui/package-lock.json* ./
-RUN npm install
+RUN npm ci   # reproducible; package-lock.json was committed in Task 6
 COPY webui/ ./
 RUN npm run build
 
@@ -1251,11 +2176,16 @@ RUN mkdir -p /opt/blast && curl -L "https://ftp.ncbi.nlm.nih.gov/blast/executabl
 RUN curl -L "https://github.com/rcedgar/muscle/releases/download/v${MUSCLE_VER}/muscle-linux-x86.v${MUSCLE_VER}" -o /usr/local/bin/muscle && chmod +x /usr/local/bin/muscle
 RUN curl -L "https://github.com/PDB-REDO/dssp/releases/download/v${DSSP_VER}/mkdssp-${DSSP_VER}-linux-x64" -o /usr/local/bin/mkdssp && chmod +x /usr/local/bin/mkdssp \
     && mkdir -p /opt/libcifpp && curl -L "https://files.wwpdb.org/pub/pdb/data/monomers/components.cif" -o /opt/libcifpp/components.cif
-RUN pip3 install --no-cache-dir fastapi "uvicorn[standard]" httpx
+# PEP 668: the rocker/r-ver base (Ubuntu >= 24.04) marks the system Python
+# externally-managed, so pip needs --break-system-packages. python-multipart is
+# required for the /api/run Form/File parameters.
+RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" httpx python-multipart
 WORKDIR /app
 COPY . /app
 RUN R CMD INSTALL .
-COPY --from=frontend /src/dist /app/web/static
+# vite.config.ts sets build.outDir = "../web/static"; in this stage webui/ is at /src,
+# so the build output lands at /web/static (NOT /src/dist).
+COPY --from=frontend /web/static /app/web/static
 RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 8000
 CMD ["/app/docker-entrypoint.sh"]
@@ -1276,6 +2206,7 @@ Rplots.pdf
 uv.lock
 node_modules
 webui/node_modules
+__pycache__
 ```
 > Note: `data`, `outputs`, `.git` remain excluded (persisted via volumes); `web/` and `webui/` are included so the image builds.
 
@@ -1300,6 +2231,8 @@ git commit -m "feat: multi-stage Docker build, compose ports, and container smok
 - [ ] **Step 1: Write the failing test**
 ```python
 # tests/web/test_app.py (append)
+from web import config
+
 def test_index_served():
     import os
     client = TestClient(app_module.app)
@@ -1328,6 +2261,7 @@ git commit -m "docs: document web app usage and finalize"
 
 ## Self-Review
 
-1. **Spec coverage:** §2 goals 1–8 all mapped — startup download (Tasks 2,10), UniProt/custom/N-term (Task 4 + `single_score.R` arg pass-through), search/resolve (Task 3), FASTA/MSA + info (Tasks 8,9), JS chart with precise hover (Tasks 6,7), two-way linked hover (Tasks 7,8), no auth + disk caching (Tasks 4,5), clean UI + useful info (Tasks 6,8,9). Incremental/committed/TDD (Global Constraints + every task ends in commit; tests per task). ✅
+1. **Spec coverage:** §2 goals 1–8 all mapped — startup download (Tasks 2,10), UniProt/custom/N-term (Task 4 + `single_score.R` env pass-through), search/resolve (Task 3), FASTA/MSA + info (Tasks 8,9), JS chart with precise hover (Tasks 6,7), two-way linked hover (Tasks 7,8), no auth + disk caching (Tasks 4,5,5.5), clean UI + useful info (Tasks 6,8,9). Incremental/committed/TDD (Global Constraints + every task ends in commit; tests per task). ✅
 2. **Placeholder scan:** No TBD/TODO. Every code step has concrete code. ✅
-3. **Type consistency:** `bus.setActive(pos:number|null)` used consistently in `sync.ts`, `sequence.ts`, `msa.ts`, `chart.ts` (`highlight(pos)`), `info.ts`, `table.ts`. `renderScoreChart` returns `{chart, setHoverCallback, highlight}` referenced in Task 7 main.ts. `parse_score_csv`/`parse_msa`/`compute_top_sites`/`write_meta`/`read_meta` names stable across Tasks 5 and 9. `finalize_meta` added in Task 9 and named in test. ✅
+3. **Type consistency:** `bus.setActive(pos:number|null)` used consistently in `sync.ts`, `sequence.ts`, `msa.ts`, `chart.ts` (`highlight(pos)`), `info.ts`, `table.ts`. `renderScoreChart` returns `{chart, setHoverCallback, highlight}` referenced in Task 7 main.ts; `MIN_DATASET_INDEX` exported and used by `highlight`. `parse_score_csv`/`parse_msa`/`compute_top_sites`/`write_meta`/`read_meta` names stable across Tasks 5, 5.5, 9; local-maxima rule identical in `parsing.compute_top_sites` and `chart.ts topSites`. `ensure_meta` introduced in 5.5; `finalize_meta` (Task 9) delegates to it. `/api/run` Form fields match `api.ts` FormData keys and `smoke.sh -F` usage. ✅
+4. **Post-implementation review (Tasks 1–5):** done after a weaker model built them — defects found by reading the code + live TestClient probes (422 `/api/run`, 200-status 404s, thread-per-job, missing meta/progress, top-N sort, string scores, brittle search, unverified outputs, missing `python-multipart`) are corrected in Task 5.5 with full replacement code and tests. ✅
