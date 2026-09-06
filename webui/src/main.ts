@@ -1,6 +1,7 @@
-import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo } from "./api";
+import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo, fetchMsa } from "./api";
 import { renderScoreChart, topSites } from "./chart";
 import { renderSequence } from "./sequence";
+import { renderMsa } from "./msa";
 import { bus } from "./sync";
 const $ = (id:string)=>document.getElementById(id)!;
 let chartHandle: any = null;
@@ -37,6 +38,8 @@ async function showResults(acc:string) {
   if (chartHandle) chartHandle.chart.destroy();
   chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
   renderSequence($("sequence") as HTMLElement, rows);
+  const msa = await fetchMsa(acc);
+  renderMsa($("msa") as HTMLElement, msa);
   chartHandle.setHoverCallback((pos:number|null)=>bus.setActive(pos));
   bus.onActive((pos)=>chartHandle.highlight(pos));
 }

@@ -8,3 +8,7 @@ canvas{max-width:100%}
 .seqstrip{display:flex;flex-wrap:wrap;font-family:monospace;font-size:12px;line-height:1.4}
 .seqstrip .res{padding:0 1px;cursor:pointer}
 .seqstrip .res.active{background:#ffd166;outline:1px solid #d62828}
+.msaname{display:inline-block;width:140px;font-family:monospace;font-size:11px;overflow:hidden}
+.msastrip{font-family:monospace;font-size:11px;white-space:nowrap}
+.cell.red{background:#e63946;color:#fff}.cell.blue{background:#a8dadc}.cell.yellow{background:#ffd166}
+.cell.active{outline:1px solid #1d2433}
