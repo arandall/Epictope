@@ -1,0 +1,20 @@
+webui/src/main.ts
+  h_e49bc6578e470a 1,4,41-42
+webui/src/msa.ts
+  h_e49bc6578e470a 1-46
+webui/src/style.css
+  h_e49bc6578e470a 11-14
+webui/test/msa.test.ts
+  h_e49bc6578e470a 1-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "1e38acca7609be56f6a2a128cf86345a94afb787",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
