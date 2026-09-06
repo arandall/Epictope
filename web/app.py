@@ -1,6 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from pydantic import BaseModel
 from web import config
+from web import uniprot
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -16,3 +18,14 @@ def status():
         if text:
             progress = text.splitlines()[-1]
     return {"installed": config.INSTALL_MARKER.exists(), "progress": progress}
+
+class ResolveReq(BaseModel):
+    accessions: list[str]
+
+@app.get("/api/search")
+def search(q: str = ""):
+    return uniprot.search(q)
+
+@app.post("/api/resolve")
+def resolve(req: ResolveReq):
+    return uniprot.resolve(req.accessions)
