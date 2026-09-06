@@ -1,0 +1,20 @@
+tests/web/test_app.py
+  h_e49bc6578e470a 29-30,38-59
+tests/web/test_pipeline.py
+  h_e49bc6578e470a 86-108,193-223
+web/app.py
+  h_e49bc6578e470a 33-38,44
+web/pipeline.py
+  h_e49bc6578e470a 30,34-35,103-110,151-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "cff64aacb4a5fa10d993cb1cfc05eab760a35e69",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
