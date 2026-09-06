@@ -1,0 +1,20 @@
+tests/web/test_app.py
+  h_e49bc6578e470a 1-10
+web/app.py
+  h_e49bc6578e470a 1-13
+web/config.py
+  h_e49bc6578e470a 1-9
+web/requirements.txt
+  h_e49bc6578e470a 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "f38654ac950c2c97e310049d6da625cdd5a488b8",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
