@@ -1,0 +1,18 @@
+.python-version
+  h_e49bc6578e470a 1
+pyproject.toml
+  h_e49bc6578e470a 1-17
+uv.lock
+  h_e49bc6578e470a 1-760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "fad4eeac98ed20d0b2ce6c6971f5535d700c6307",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
