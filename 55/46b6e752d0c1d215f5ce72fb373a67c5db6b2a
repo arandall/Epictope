@@ -1,0 +1,24 @@
+tests/web/test_pipeline_meta.py
+  h_e49bc6578e470a 1-15
+web/pipeline.py
+  h_e49bc6578e470a 99-103,143
+webui/src/info.ts
+  h_e49bc6578e470a 1-15
+webui/src/main.ts
+  h_e49bc6578e470a 5-6,37,41
+webui/src/style.css
+  h_e49bc6578e470a 15-17
+webui/src/table.ts
+  h_e49bc6578e470a 1-23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "5546b6e752d0c1d215f5ce72fb373a67c5db6b2a",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
