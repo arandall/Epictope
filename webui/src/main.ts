@@ -1,5 +1,7 @@
 import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo } from "./api";
 import { renderScoreChart, topSites } from "./chart";
+import { renderSequence } from "./sequence";
+import { bus } from "./sync";
 const $ = (id:string)=>document.getElementById(id)!;
 let chartHandle: any = null;
 
@@ -34,4 +36,7 @@ async function showResults(acc:string) {
      <p>Top sites: ${info.top_sites.map((s:any)=>s.position).join(", ")}</p>`;
   if (chartHandle) chartHandle.chart.destroy();
   chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
+  renderSequence($("sequence") as HTMLElement, rows);
+  chartHandle.setHoverCallback((pos:number|null)=>bus.setActive(pos));
+  bus.onActive((pos)=>chartHandle.highlight(pos));
 }
