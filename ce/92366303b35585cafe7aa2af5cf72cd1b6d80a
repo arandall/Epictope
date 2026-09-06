@@ -1,0 +1,20 @@
+scripts/single_score.R
+  h_e49bc6578e470a 9-13
+tests/web/test_pipeline.py
+  h_e49bc6578e470a 1-21
+web/app.py
+  h_e49bc6578e470a 3,7,34-53
+web/pipeline.py
+  h_e49bc6578e470a 1-84
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "ce92366303b35585cafe7aa2af5cf72cd1b6d80a",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
