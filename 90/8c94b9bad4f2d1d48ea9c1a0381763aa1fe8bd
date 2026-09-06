@@ -1,0 +1,22 @@
+.gitignore
+  h_e49bc6578e470a 5-6
+README.md
+  h_e49bc6578e470a 49-53,55-56,58,60,63,66,67,68,69,70-72,73-74,75-76,77,78-80,83-84,85,86-87,94-96,98,101-104,107-109,111-113,116,119-120,127,130-131,134-135,145,159,163,165-169,172
+docker-compose.yml
+  h_e49bc6578e470a 1-12
+.dockerignore
+  h_e49bc6578e470a 1-13
+Dockerfile
+  h_e49bc6578e470a 1-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "908c94b9bad4f2d1d48ea9c1a0381763aa1fe8bd",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
