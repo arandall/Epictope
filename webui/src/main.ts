@@ -2,6 +2,8 @@ import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo, fetchMsa }
 import { renderScoreChart, topSites } from "./chart";
 import { renderSequence } from "./sequence";
 import { renderMsa } from "./msa";
+import { renderInfo } from "./info";
+import { renderTable } from "./table";
 import { bus } from "./sync";
 const $ = (id:string)=>document.getElementById(id)!;
 let chartHandle: any = null;
@@ -32,12 +34,11 @@ async function poll(job_id:string, acc:string) {
 async function showResults(acc:string) {
   const rows:any[] = await fetchScore(acc);
   const info:any = await fetchInfo(acc);
-  ($("info") as HTMLElement).innerHTML = `<h2>${acc}</h2>
-     <p>${info.gene} — ${info.organism}</p>
-     <p>Top sites: ${info.top_sites.map((s:any)=>s.position).join(", ")}</p>`;
+  renderInfo($("info") as HTMLElement, info);
   if (chartHandle) chartHandle.chart.destroy();
   chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
   renderSequence($("sequence") as HTMLElement, rows);
+  renderTable($("table") as HTMLElement, rows);
   const msa = await fetchMsa(acc);
   renderMsa($("msa") as HTMLElement, msa);
   chartHandle.setHoverCallback((pos:number|null)=>bus.setActive(pos));

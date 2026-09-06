@@ -96,6 +96,11 @@ def ensure_meta(uniprot_id: str, custom_structure=None, n_terminal=None,
         pass
     parsing.write_meta(uniprot_id, **meta)
 
+def finalize_meta(uniprot_id: str, custom_structure=None, n_terminal=None,
+                  resolution_note: str = ""):
+    """Public meta-finalization entry point; delegates to ensure_meta."""
+    return ensure_meta(uniprot_id, custom_structure, n_terminal, resolution_note)
+
 def run_job(job_id: str, uniprot_id: str, custom_structure=None, n_terminal=None):
     out = _out_dir(uniprot_id)
     log_path = out / "run.log"
@@ -135,7 +140,7 @@ def run_job(job_id: str, uniprot_id: str, custom_structure=None, n_terminal=None
             JobStore.set_status(job_id, "error",
                                 error=f"pipeline exited 0 but did not produce: {', '.join(missing)}")
             return
-        ensure_meta(uniprot_id, custom_structure, n_terminal)
+        finalize_meta(uniprot_id, custom_structure, n_terminal)
         JobStore.set_status(job_id, "done", progress="", result=_result_links(uniprot_id))
     except Exception as e:  # noqa: BLE001
         JobStore.set_status(job_id, "error", error=str(e))

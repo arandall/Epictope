@@ -12,3 +12,6 @@ canvas{max-width:100%}
 .msastrip{font-family:monospace;font-size:11px;white-space:nowrap}
 .cell.red{background:#e63946;color:#fff}.cell.blue{background:#a8dadc}.cell.yellow{background:#ffd166}
 .cell.active{outline:1px solid #1d2433}
+table.ft{border-collapse:collapse;font-size:11px} table.ft th,table.ft td{border:1px solid #ccc;padding:1px 4px}
+#ftFilter{margin-bottom:.4rem}
+.note{color:#9a6a00}
