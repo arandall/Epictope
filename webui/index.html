@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>EpicTope</title><link rel="stylesheet" href="./src/style.css"/></head>
+<body><div id="app">
+  <header><h1>EpicTope</h1>
+    <input id="search" placeholder="Gene, accession, or organism"/>
+    <button id="searchBtn">Search</button>
+    <div id="results"></div>
+    <div id="runBox">
+      <input id="nterm" placeholder="N-term residue (optional)"/>
+      <input id="cif" type="file" accept=".cif"/>
+      <button id="runBtn">Run prediction</button>
+    </div>
+  </header>
+  <main>
+    <section id="info"></section>
+    <section><canvas id="chart"></canvas></section>
+    <section id="sequence"></section>
+    <section id="msa"></section>
+    <section id="table"></section>
+  </main>
+</div><script type="module" src="./src/main.ts"></script></body></html>

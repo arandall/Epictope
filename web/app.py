@@ -74,3 +74,9 @@ def result_info(uniprot_id: str):
     if meta is None:
         raise HTTPException(status_code=404, detail="no metadata for this ID")
     return meta
+
+from fastapi.staticfiles import StaticFiles
+# check_dir=False: web/static doesn't exist until the first frontend build, and
+# the backend test suite imports this app before then.
+app.mount("/", StaticFiles(directory=str(config.APP_DIR / "web" / "static"),
+                           html=True, check_dir=False), name="static")
