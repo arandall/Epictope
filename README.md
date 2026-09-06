@@ -47,49 +47,73 @@ Disordered binding regions are sections of a protein that do not have a well-def
 ## Installation
 
 ### System requirements
-Installing EpicTope and its dependencies will require at least 3Gb of disk space. Users should also be familar with using conda, a package manager for macOS/linux and Windows. Conda does not need to be used if users already have access to installations of BLAST, MUSCLE, and DSSP, either locally or on an HPC environment.  
+Installing EpicTope and its dependencies will require at least 3Gb of disk space. EpicTope no longer uses Conda. It is managed with [uv](https://docs.astral.sh/uv/) for the Python helper scripts, downloads the binary tools BLAST, MUSCLE, and DSSP directly, and uses a system installation of R.
 
 ### Software dependencies
 
-To calculate the multiple sequence alignment and secondary characteristics, EpicTope relies on local installs of BLAST, MUSCLE, and DSSP. These packages can be installed using Conda, an open-source package management system and environment management system that runs on Windows, macOS, and Linux. Conda installers can be found at the Anaconda [website](https://www.anaconda.com/). Once installed, you may run the follow commands to install the requisite packages. These commands will create a conda environment named EpicTope, and install the requisite packages into that environment. Installing EpicTope and its dependencies will require at least 3GB of disk space.  
+To calculate the multiple sequence alignment and secondary characteristics, EpicTope relies on local installs of BLAST, MUSCLE, and DSSP. These binary tools are downloaded by the install script below (no Conda or system package manager required). The Python helper scripts (`python/`) are managed with [uv](https://docs.astral.sh/uv/), a fast Python package manager and virtual-environment tool. R must be installed separately (see per-OS instructions) because uv manages Python only. Installing EpicTope and its dependencies will require at least 3GB of disk space.  
 
 
 ### macOS/Linux installation
 
-For macOS/Linux, commands are issued at the terminal. Dependencies can be installed using the following commands.
+For macOS/Linux, commands are issued at the terminal. The install script downloads BLAST, MUSCLE, and DSSP into a local `tools/` directory, creates a uv-managed Python environment, and prints the R installation steps.
 
-1. Download and place the contents of the "install/mac_linux" folder into your project directory. In your terminal, type "ls" to verify the files are in the correct folder.
+1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you do not already have it (the install script will do this for you).
+
+2. From the project root, run the installer:
 
 ```bash
-curl -o "epictope_install.sh" "https://raw.githubusercontent.com/FriedbergLab/EpicTope/main/install/mac_linux/epictope_install.sh"
-ls
+bash install/mac_linux/install.sh
 ```
 
-2. Run the installation scripts in the terminal with the following commands. 
-```
-chmod u+x epictope_install.sh
-bash -i epictope_install.sh
+3. The script prints the commands to install R and the EpicTope R package. After R is installed, run them once:
+
+```bash
+R -e "install.packages(c('remotes','BiocManager'), repos='https://cloud.r-project.org')"
+R -e "BiocManager::install('Biostrings')"
+R -e "remotes::install_github('FriedbergLab/Epictope')"
 ```
 
-Additional installation methods for Linux can be found in the Detailed Installation for Linux [page](https://github.com/FriedbergLab/EpicTope/wiki/Detailed-Linux-Instructions)
+4. Before running any EpicTope command, activate the local tool environment so BLAST/MUSCLE/DSSP are on your `PATH`:
+
+```bash
+source tools/activate
+```
+
+Note: on macOS there is no official prebuilt `mkdssp` binary. The installer will tell you to install it with Homebrew instead:
+
+```bash
+brew install brewsci/bio/dssp
+```
+
+Additional installation methods for Linux can be found in the Detailed Installation for Linux [page](https://github.com/FriedbergLab/Epictope/wiki/Detailed-Linux-Instructions)
 
 
 ### Windows installation
 
-BLAST and MUSCLE are not available for installation on Windows with conda and have to be installed separately. We provide a wrapper script to install these programs and the conda environment. 
+The installer downloads MUSCLE and DSSP (mkdssp) into a local `tools/` directory, runs the official BLAST+ installer, creates a uv-managed Python environment, and prints the R installation steps. Run PowerShell as Administrator (the BLAST+ installer requires it).
 
-1. In Anaconda prompt, download and place the "epictope_install.bat" folder into your project directory with curl. Type "dir" to verify the files are in the correct folder.
-```bash
-curl -o epictope_install.bat https://raw.githubusercontent.com/FriedbergLab/EpicTope/main/install/windows/epictope_install.bat
-dir
+1. From the project root, run the installer:
+
+```powershell
+powershell -ExecutionPolicy ByPass -File install/windows/install.ps1
 ```
 
-2. Run the installation scripts in Anaconda Prompt with the following commands. If prompted by Conda, type "Y" for Yes and then press "Enter".  Click "Yes" if a pop-up window asks if you allow this app to make changes to your advice.
-```
-epictope_install.bat
+2. Install R from [CRAN](https://cran.r-project.org/bin/windows/base/) if you do not already have it, then install the EpicTope R package and dependencies in R:
+
+```r
+install.packages(c("remotes","BiocManager"), repos="https://cloud.r-project.org")
+BiocManager::install("Biostrings")
+remotes::install_github("FriedbergLab/Epictope")
 ```
 
-More detailed instructions for Windows can be found in the Detailed Installation for Windows [page](https://github.com/FriedbergLab/EpicTope/wiki/Detailed-Windows-Instructions)
+3. Before running any EpicTope command, dot-source the local tool environment so BLAST/MUSCLE/DSSP are on your `PATH`:
+
+```powershell
+.\tools\activate.ps1
+```
+
+More detailed instructions for Windows can be found in the Detailed Installation for Windows [page](https://github.com/FriedbergLab/Epictope/wiki/Detailed-Windows-Instructions)
 
 ## Usage
 
@@ -101,7 +125,7 @@ For our example, we investigate the Smad5 gene for Zebrafish. Searching for the 
 
 Run the EpicTope workflow with the following commands in the terminal.
 ```bash
-conda activate epictope
+source tools/activate
 Rscript install.R
 Rscript single_score.R Q9W7E7
 ```
@@ -109,9 +133,9 @@ Rscript single_score.R Q9W7E7
 ### Example 1B: Generating EpicTope predictions on Windows
 
 On windows, the commands are the same as for Linux, except Windows uses a backwards slash "\\" instead of a forward slash "/".
-Run the EpicTope workflow with the following commands in Anaconda Prompt.
-```bash
-conda activate epictope
+Run the EpicTope workflow with the following commands in the EpicTope environment (PowerShell).
+```powershell
+.\tools\activate.ps1
 Rscript install.R
 Rscript single_score.R Q9W7E7
 ```
@@ -120,7 +144,7 @@ Rscript single_score.R Q9W7E7
 
 Some UniProt entries do not have a corresponding AlphaFold prediction yet. To use a custom structure, first identify the Uniprot ID as described in example 1A, and select the "Sequence" tab (for example: [Q9W7E7](https://www.uniprot.org/uniprotkb/Q9W7E7/entry#sequences)). Submit the exact sequence to [AlphaFold](https://alphafoldserver.com/). Download the results, and copy one of the .cif files to the `data/models` directory of `epictope`. Finally, supply the path to the custom structure as a command-line input to `epictope`:
 ```bash
-conda activate epictope
+source tools/activate
 Rscript install.R
 Rscript single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif
 ```
