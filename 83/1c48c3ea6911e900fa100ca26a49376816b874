@@ -1,0 +1,14 @@
+docs/superpowers/plans/2026-09-06-epictope-webapp.md
+  h_e49bc6578e470a 1-1333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "831c48c3ea6911e900fa100ca26a49376816b874",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
