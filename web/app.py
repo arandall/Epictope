@@ -30,15 +30,18 @@ def resolve(req: ResolveReq):
     return uniprot.resolve(req.accessions)
 
 @app.post("/api/run")
-async def run(uniprot_id: str = Form(...),
-              n_terminal: int | None = Form(None),
-              custom_structure: UploadFile | None = File(None)):
+def run(uniprot_id: str = Form(...),
+        n_terminal: int | None = Form(None),
+        custom_structure: UploadFile | None = File(None)):
+    if not config.INSTALL_MARKER.exists():
+        raise HTTPException(status_code=503,
+                            detail="reference data is still downloading; try again soon")
     path = None
     if custom_structure:
         import pathlib, tempfile, uuid
         safe_name = pathlib.Path(custom_structure.filename or "").name or "structure.cif"
         p = pathlib.Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{safe_name}"
-        p.write_bytes(await custom_structure.read())
+        p.write_bytes(custom_structure.file.read())
         path = str(p)
     job_id = pipeline.JobStore.create(uniprot_id, path, n_terminal)
     pipeline.enqueue_job(job_id, uniprot_id, path, n_terminal)

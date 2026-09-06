@@ -83,6 +83,29 @@ def test_run_job_sets_outdir_and_cwd(tmp_path, monkeypatch):
     assert (tmp_path / "Q9W7E7" / "run.log").exists()
     assert parsing.read_meta("Q9W7E7") is not None  # meta written on run success
 
+def test_result_exists_default_ignores_custom_sidecar(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"; d.mkdir()
+    (d / "Q9W7E7_score.csv").write_text("position,min\n1,0\n")
+    (d / "custom_structure.txt").write_text("/x/m.cif")
+    assert pipeline.result_exists("Q9W7E7") is False              # sidecar means custom-run output
+    assert pipeline.result_exists("Q9W7E7", "/x/m.cif") is True   # custom run still caches on match
+    assert pipeline.result_exists("Q9W7E7", "/x/other.cif") is False
+
+def test_run_job_clears_stale_custom_sidecar(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "APP_DIR", tmp_path)
+    monkeypatch.setattr(pipeline.uniprot, "search", lambda q: [])
+    monkeypatch.setattr(pipeline.subprocess, "Popen", make_fake_popen())
+    d = tmp_path / "Q9W7E7"; d.mkdir()
+    (d / "custom_structure.txt").write_text("/x/old.cif")
+    job_id = pipeline.JobStore.create("Q9W7E7")
+    pipeline.run_job(job_id, "Q9W7E7")
+    assert not (tmp_path / "Q9W7E7" / "custom_structure.txt").exists()
+    assert pipeline.JobStore.get(job_id)["status"] == "done"
+
 def test_run_job_custom_structure_sidecar(tmp_path, monkeypatch):
     import web.config as cfg
     monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
@@ -166,6 +189,37 @@ def test_jobs_run_one_at_a_time(tmp_path, monkeypatch):
     assert pipeline.JobStore.create("AAA") == j1
     pipeline.enqueue_job(j1, "AAA")
     assert pipeline.JobStore.get(j1)["status"] == "running"
+    release.set()
+    for _ in range(50):
+        if pipeline.JobStore.get(j2)["status"] == "done":
+            break
+        time.sleep(0.1)
+    assert pipeline.JobStore.get(j2)["status"] == "done"
+
+def test_worker_survives_run_job_exception(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    monkeypatch.setattr(pipeline, "result_exists", lambda *a, **k: False)
+    def boom(job_id, uid, custom_structure=None, n_terminal=None):
+        raise RuntimeError("disk exploded")
+    monkeypatch.setattr(pipeline, "run_job", boom)
+    j1 = pipeline.JobStore.create("BBB")
+    pipeline.enqueue_job(j1, "BBB")
+    for _ in range(50):
+        if pipeline.JobStore.get(j1)["status"] == "error":
+            break
+        time.sleep(0.1)
+    state = pipeline.JobStore.get(j1)
+    assert state["status"] == "error" and "disk exploded" in state["error"]
+    started = threading.Event(); release = threading.Event()
+    def ok(job_id, uid, custom_structure=None, n_terminal=None):
+        started.set()
+        release.wait(5)
+        pipeline.JobStore.set_status(job_id, "done")
+    monkeypatch.setattr(pipeline, "run_job", ok)
+    j2 = pipeline.JobStore.create("CCC")
+    pipeline.enqueue_job(j2, "CCC")
+    assert started.wait(5)  # worker thread must still be alive after the failure
     release.set()
     for _ in range(50):
         if pipeline.JobStore.get(j2)["status"] == "done":

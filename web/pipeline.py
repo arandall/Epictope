@@ -27,10 +27,12 @@ def result_exists(uniprot_id: str, custom_structure: str | None = None) -> bool:
     score = _out_dir(uniprot_id) / f"{uniprot_id}_score.csv"
     if not score.exists():
         return False
+    sidecar = _out_dir(uniprot_id) / "custom_structure.txt"
     if custom_structure:
-        sidecar = _out_dir(uniprot_id) / "custom_structure.txt"
         if not sidecar.exists() or sidecar.read_text().strip() != custom_structure:
             return False
+    elif sidecar.exists():
+        return False
     return True
 
 def build_command(uniprot_id: str, custom_structure: str | None = None,
@@ -96,14 +98,16 @@ def ensure_meta(uniprot_id: str, custom_structure=None, n_terminal=None,
 
 def run_job(job_id: str, uniprot_id: str, custom_structure=None, n_terminal=None):
     out = _out_dir(uniprot_id)
-    out.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ)
-    env["EPICTORE_OUTDIR"] = str(out)
-    if custom_structure:
-        (out / "custom_structure.txt").write_text(custom_structure)
-    cmd = build_command(uniprot_id, custom_structure, n_terminal)
     log_path = out / "run.log"
     try:
+        out.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
+        env["EPICTORE_OUTDIR"] = str(out)
+        if custom_structure:
+            (out / "custom_structure.txt").write_text(custom_structure)
+        else:
+            (out / "custom_structure.txt").unlink(missing_ok=True)
+        cmd = build_command(uniprot_id, custom_structure, n_terminal)
         proc = subprocess.Popen(
             cmd, cwd=str(config.APP_DIR), env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -144,6 +148,8 @@ def _worker():
             JobStore.set_status(job_id, "running")
             run_job(job_id, job["uniprot_id"], job.get("custom_structure"),
                     job.get("n_terminal"))
+        except Exception as e:  # noqa: BLE001
+            JobStore.set_status(job_id, "error", error=str(e))
         finally:
             with _LOCK:
                 _ACTIVE.discard(job_id)
