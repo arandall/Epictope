@@ -1,0 +1,18 @@
+tests/web/test_uniprot.py
+  h_e49bc6578e470a 1-26
+web/app.py
+  h_e49bc6578e470a 3,5,21-31
+web/uniprot.py
+  h_e49bc6578e470a 1-43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "89180b11b64ddbb78ed5971397dcdfaed7b5b0f7",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
