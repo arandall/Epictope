@@ -1,0 +1,36 @@
+web/app.py
+  h_e49bc6578e470a 76-82
+webui/index.html
+  h_e49bc6578e470a 1-22
+webui/package-lock.json
+  h_e49bc6578e470a 1-1876
+webui/package.json
+  h_e49bc6578e470a 1-14
+webui/src/api.ts
+  h_e49bc6578e470a 1-14
+webui/src/chart.ts
+  h_e49bc6578e470a 1-100
+webui/src/main.ts
+  h_e49bc6578e470a 1-37
+webui/src/style.css
+  h_e49bc6578e470a 1-7
+webui/src/types.ts
+  h_e49bc6578e470a 1-7
+webui/test/score.test.ts
+  h_e49bc6578e470a 1-24
+webui/tsconfig.json
+  h_e49bc6578e470a 1-4
+webui/vite.config.ts
+  h_e49bc6578e470a 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "e2068a9caa264fb52cb2e3ec6f130ac0487401c8",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
