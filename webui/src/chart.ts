@@ -43,10 +43,11 @@ export const MIN_DATASET_INDEX = 5;
 // All tracks are drawn RAW so spikes land exactly on their residue (goal #5);
 // the only smoothed line is the dashed `min` overlay mirroring plot_scores.R.
 export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]) {
-  const labels = rows.map(r => Number(r.position));
   const raw = (key: string, color: string, width = 1) => ({
     label: key,
-    data: rows.map(r => Number(r[key])),
+    // parsing:false requires pre-parsed {x,y} points; plain numbers leave parsed[axis]
+    // undefined and every point is skipped (empty chart, degenerate scales).
+    data: rows.map(r => ({ x: Number(r.position), y: Number(r[key]) })),
     borderColor: color,
     backgroundColor: color,
     pointRadius: 0,
@@ -55,12 +56,13 @@ export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[], top: To
   });
   const chart = new Chart(canvas, {
     type: "line",
-    data: { labels, datasets: [
+    data: { datasets: [
       raw("normalized_entropy", "#888"), raw("ss_score", "#2a9d8f"),
       raw("rsa", "#e9c46a"), raw("inv_anchor2", "#e76f51"),
       raw("sum_score", "#457b9d"),
       raw("min", "#d62828", 2.5),  // index 5 = MIN_DATASET_INDEX (emphasized)
-      { label: "min (smoothed)", data: movingAverage(rows, "min", 7),
+      { label: "min (smoothed)", data: movingAverage(rows, "min", 7).map((y, i) =>
+          ({ x: Number(rows[i].position), y })),
         borderColor: "#7f1d1d", backgroundColor: "#7f1d1d",
         borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
     ] },
