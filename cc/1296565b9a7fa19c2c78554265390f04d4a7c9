@@ -1,0 +1,20 @@
+pyproject.toml
+  h_e49bc6578e470a 14-18
+uv.lock
+  h_e49bc6578e470a 16-46,283-300,308-309,311-312,316,323-324,326-327,331-347,359-429,439-447,625-633,689-697,707-832,842-857,870-887,1011-1023,1064-1075,1099-1263,1273-1427
+tests/web/test_pipeline.py
+  h_e49bc6578e470a 3,11,17,22,26-115
+web/app.py
+  h_e49bc6578e470a 43,44-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "cc1296565b9a7fa19c2c78554265390f04d4a7c9",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}

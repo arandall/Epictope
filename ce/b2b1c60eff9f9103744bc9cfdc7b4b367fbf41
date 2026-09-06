@@ -1,0 +1,18 @@
+tests/web/test_parsing.py
+  h_e49bc6578e470a 1-31
+web/app.py
+  h_e49bc6578e470a 8,56-76
+web/parsing.py
+  h_e49bc6578e470a 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "ceb2b1c60eff9f9103744bc9cfdc7b4b367fbf41",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
