@@ -1,4 +1,6 @@
+# web/requirements.txt (full replacement)
 fastapi
 uvicorn[standard]
+python-multipart
 pytest
 httpx

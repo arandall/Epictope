@@ -3,16 +3,26 @@ import json
 from pathlib import Path
 from web import config
 
+NUMERIC_COLS = {"position", "normalized_entropy", "ss_score", "rsa", "inv_anchor2",
+                "sum_score", "min", "shannon", "resnum", "sasa", "phi", "psi",
+                "iupred2", "anchor2"}
+
+def _num(v):
+    if v is None:
+        return None
+    v = str(v).strip()
+    if v in ("", "NA", "NaN", "nan"):
+        return None
+    try:
+        f = float(v)
+    except ValueError:
+        return v
+    return int(f) if f.is_integer() else f
+
 def parse_score_csv(path) -> list[dict]:
-    path = Path(path)
-    out = []
-    with path.open() as fh:
-        for r in csv.DictReader(fh):
-            d = dict(r)
-            if "position" in d:
-                d["position"] = int(d["position"])
-            out.append(d)
-    return out
+    with Path(path).open() as fh:
+        return [{k: (_num(v) if k in NUMERIC_COLS else v) for k, v in r.items()}
+                for r in csv.DictReader(fh)]
 
 def parse_msa(path) -> dict:
     path = Path(path)
@@ -30,9 +40,17 @@ def parse_msa(path) -> dict:
     return {"records": records, "query": records[0]["id"] if records else ""}
 
 def compute_top_sites(rows: list[dict], n: int = 5) -> list[dict]:
-    ranked = sorted(rows, key=lambda r: float(r.get("min", 0)), reverse=True)
-    return [{"position": int(r["position"]), "min": float(r["min"]),
-             "min_feature": r.get("min_feature", "")} for r in ranked[:n]]
+    mins = [float(r.get("min") or 0) for r in rows]
+    peaks = []
+    for i, m in enumerate(mins):
+        left = mins[i - 1] if i > 0 else float("-inf")
+        right = mins[i + 1] if i < len(mins) - 1 else float("-inf")
+        if m > left and m > right:
+            r = rows[i]
+            peaks.append({"position": int(r["position"]), "min": m,
+                          "min_feature": r.get("min_feature", "")})
+    peaks.sort(key=lambda p: p["min"], reverse=True)
+    return peaks[:n]
 
 def _meta_path(uniprot_id: str) -> Path:
     return config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_meta.json"
@@ -40,6 +58,7 @@ def _meta_path(uniprot_id: str) -> Path:
 def write_meta(uniprot_id: str, **fields):
     p = _meta_path(uniprot_id)
     p.parent.mkdir(parents=True, exist_ok=True)
+    fields["uniprot_id"] = uniprot_id
     p.write_text(json.dumps(fields, indent=2))
 
 def read_meta(uniprot_id: str) -> dict | None:

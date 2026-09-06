@@ -1,5 +1,8 @@
 import json
+import logging
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -10,22 +13,34 @@ if str(SCRIPTS_DIR) not in sys.path:
 from resolve_accessions import resolve_one  # noqa: E402
 
 UNIPROT_API = "https://rest.uniprot.org/uniprotkb/search"
+log = logging.getLogger(__name__)
 
 def _get_json(url, params=None):
     if params:
         url = url + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    resp = urllib.request.urlopen(req, timeout=30)
-    return json.loads(resp.read().decode("utf-8"))
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 def search(term: str) -> list[dict]:
-    data = _get_json(UNIPROT_API, params={
-        "query": term,
-        "fields": "accession,id,gene_names,organism_name,reviewed,xref_alphafolddb",
-        "format": "json", "size": "20",
-    })
+    term = (term or "").strip()
+    if not term:
+        return []
+    params = {"query": term,
+              "fields": "accession,id,gene_names,organism_name,reviewed,xref_alphafolddb",
+              "format": "json", "size": "20"}
+    data = None
+    for attempt in (1, 2):
+        try:
+            data = _get_json(UNIPROT_API, params=params)
+            break
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            log.warning("UniProt search attempt %d failed: %s", attempt, e)
+            if attempt == 2:
+                return []
+            time.sleep(1)
     out = []
-    for r in data.get("results", []):
+    for r in (data or {}).get("results", []):
         af = any(x.get("database") == "AlphaFoldDB" for x in r.get("uniProtKBCrossReferences", []))
         gene = ""
         if r.get("genes"):

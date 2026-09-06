@@ -1,11 +1,7 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
-from fastapi import UploadFile, File
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from web import config
-from web import uniprot
-from web import pipeline
-from web import parsing
+from web import config, parsing, pipeline, uniprot
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -33,44 +29,45 @@ def search(q: str = ""):
 def resolve(req: ResolveReq):
     return uniprot.resolve(req.accessions)
 
-class RunReq(BaseModel):
-    uniprot_id: str
-    n_terminal: int | None = None
-
 @app.post("/api/run")
-async def run(req: RunReq, custom_structure: UploadFile | None = File(None)):
+async def run(uniprot_id: str = Form(...),
+              n_terminal: int | None = Form(None),
+              custom_structure: UploadFile | None = File(None)):
     path = None
     if custom_structure:
         import pathlib, tempfile, uuid
-        safe_name = pathlib.Path(custom_structure.filename).name or "structure.cif"
+        safe_name = pathlib.Path(custom_structure.filename or "").name or "structure.cif"
         p = pathlib.Path(tempfile.gettempdir()) / f"{uuid.uuid4().hex}_{safe_name}"
         p.write_bytes(await custom_structure.read())
         path = str(p)
-    job_id = pipeline.JobStore.create(req.uniprot_id, path, req.n_terminal)
-    pipeline.enqueue_job(job_id, req.uniprot_id, path, req.n_terminal)
+    job_id = pipeline.JobStore.create(uniprot_id, path, n_terminal)
+    pipeline.enqueue_job(job_id, uniprot_id, path, n_terminal)
     return {"job_id": job_id}
 
 @app.get("/api/jobs/{job_id}")
 def job(job_id: str):
-    return pipeline.JobStore.get(job_id)
+    state = pipeline.JobStore.get(job_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="unknown job id")
+    return state
 
 @app.get("/api/results/{uniprot_id}/score")
 def result_score(uniprot_id: str):
     p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_score.csv"
     if not p.exists():
-        return {"error": "not found"}, 404
+        raise HTTPException(status_code=404, detail="no score result for this ID")
     return parsing.parse_score_csv(p)
 
 @app.get("/api/results/{uniprot_id}/msa")
 def result_msa(uniprot_id: str):
     p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_msa.fasta"
     if not p.exists():
-        return {"error": "not found"}, 404
+        raise HTTPException(status_code=404, detail="no MSA result for this ID")
     return parsing.parse_msa(p)
 
 @app.get("/api/results/{uniprot_id}/info")
 def result_info(uniprot_id: str):
     meta = parsing.read_meta(uniprot_id)
     if meta is None:
-        return {"error": "not found"}, 404
+        raise HTTPException(status_code=404, detail="no metadata for this ID")
     return meta
