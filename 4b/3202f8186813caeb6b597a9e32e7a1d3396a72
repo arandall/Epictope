@@ -1,0 +1,20 @@
+webui/package-lock.json
+  h_e49bc6578e470a 15,21-224,616-633,1164-1173,1259-1286,1305-1311,1335-1347,1459-1471,1482-1488,1516-1556,1584-1593,1604-1610,1738-1750,1848-1857,1865-1874,1921-1933,2027-2033,2061-2106,2138-2147,2297-2344,2378-2394
+webui/package.json
+  h_e49bc6578e470a 12-21
+webui/src/chart.ts
+  h_e49bc6578e470a 48-50,59,64-65
+webui/test/chart.test.ts
+  h_e49bc6578e470a 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "4b3202f8186813caeb6b597a9e32e7a1d3396a72",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
