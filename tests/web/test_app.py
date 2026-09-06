@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 from web import app as app_module
+from web import config
 from web import pipeline
 
 def test_status_shape():
@@ -66,3 +67,9 @@ def test_results_404_for_unknown_id():
 def test_unknown_job_404():
     client = TestClient(app_module.app)
     assert client.get("/api/jobs/NOPE").status_code == 404
+
+def test_index_served():
+    import os
+    client = TestClient(app_module.app)
+    if os.path.exists(str(config.APP_DIR / "web" / "static" / "index.html")):
+        assert client.get("/").status_code == 200

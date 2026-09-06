@@ -13,6 +13,7 @@ This repository contains the code source of the R EpicTope package, step-by-step
 - [Installation](#installation)
 - [Usage](#usage)
 - [Examples](#examples)
+- [Web application](#web-application)
 
 ## Methodology
 
@@ -182,6 +183,24 @@ EpicTope searches for a "config.R" file in the working directory. If it doesn't 
 ### Frequently Asked Questions
 
 A growing FAQ can be found in our repository wiki [page](https://github.com/FriedbergLab/EpicTope/wiki/F.A.Q).
+
+## Web application
+
+The repository also ships a web interface for running EpicTope without the command line. It is served by the same Docker image:
+
+```bash
+docker compose up --build
+```
+
+Then open [http://localhost:8000](http://localhost:8000) in your browser.
+
+1. Search for a protein by name, or paste a UniProt accession, and pick the right entry from the search results (the same UniProt IDs used in the examples above).
+2. Start the prediction for that protein. You can optionally upload a custom AlphaFold structure and set the N-terminal residue offset, as described in [example 1C](#example-1c-generating-epictope-predictions-for-custom-alphafold-structures).
+3. When the run finishes, the page shows an interactive score chart, the multiple sequence alignment, and a per-residue feature table.
+
+Results are cached on disk under `outputs/<UniProtID>/` (e.g. `outputs/Q9W7E7/`), so reloading the page or re-running the same protein reuses the stored results instead of recomputing them.
+
+> The first boot downloads the reference data (the proteomes used by the multiple sequence alignment) in the background before predictions can start — the same `scripts/install.R` step described above. Progress is shown in the interface, and the download only happens once per `data` volume.
 
 ## License 
 
