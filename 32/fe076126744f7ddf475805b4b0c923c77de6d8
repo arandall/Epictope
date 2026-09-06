@@ -1,0 +1,14 @@
+docs/superpowers/specs/2026-09-06-epictope-webui-ux-redesign.md
+  h_e49bc6578e470a 1-234
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "32fe076126744f7ddf475805b4b0c923c77de6d8",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
