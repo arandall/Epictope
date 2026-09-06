@@ -1,0 +1,13 @@
+# Don't bake local build artifacts or git metadata into the image.
+.git
+.kilo
+.venv
+.env
+data
+outputs
+tools
+ignore
+Rplots.pdf
+*.log
+.python-version
+uv.lock

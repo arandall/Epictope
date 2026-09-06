@@ -46,125 +46,92 @@ Disordered binding regions are sections of a protein that do not have a well-def
 
 ## Installation
 
-### System requirements
-Installing EpicTope and its dependencies will require at least 3Gb of disk space. EpicTope no longer uses Conda. It is managed with [uv](https://docs.astral.sh/uv/) for the Python helper scripts, downloads the binary tools BLAST, MUSCLE, and DSSP directly, and uses a system installation of R.
+EpicTope is distributed as a Docker image that bundles R (with TIFF/PNG device
+support), the `epictope` R package, and the required binary tools
+(**BLAST+**, **MUSCLE**, **mkdssp/DSSP**) together with their data. You only
+need [Docker](https://docs.docker.com/get-docker/) installed; no local R, uv, or
+system package manager setup is required.
 
-### Software dependencies
+> The pipeline needs network access at runtime to download proteome/CDS data
+> (`scripts/install.R`), UniProt/AlphaFold entries, and IUPred2A predictions.
 
-To calculate the multiple sequence alignment and secondary characteristics, EpicTope relies on local installs of BLAST, MUSCLE, and DSSP. These binary tools are downloaded by the install script below (no Conda or system package manager required). The Python helper scripts (`python/`) are managed with [uv](https://docs.astral.sh/uv/), a fast Python package manager and virtual-environment tool. R must be installed separately (see per-OS instructions) because uv manages Python only. Installing EpicTope and its dependencies will require at least 3GB of disk space.  
+### Build the image
 
-
-### macOS/Linux installation
-
-For macOS/Linux, commands are issued at the terminal. The install script downloads BLAST, MUSCLE, and DSSP into a local `tools/` directory, creates a uv-managed Python environment, and prints the R installation steps.
-
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if you do not already have it (the install script will do this for you).
-
-2. From the project root, run the installer:
+From the project root:
 
 ```bash
-bash install/mac_linux/install.sh
+docker build -t epictope .
 ```
 
-3. The script prints the commands to install R and the EpicTope R package. After R is installed, run them once:
+(or `docker compose build` if you use the provided `docker-compose.yml`).
+
+### Run
+
+The container runs the pipeline from `/app` (the repo root) and writes results to
+`outputs/`. Mount `./data` and `./outputs` so downloaded data and results
+persist on the host:
 
 ```bash
-R -e "install.packages(c('remotes','BiocManager'), repos='https://cloud.r-project.org')"
-R -e "BiocManager::install('Biostrings')"
-R -e "remotes::install_github('FriedbergLab/Epictope')"
+# Interactive R shell
+docker run --rm -it -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" epictope
+
+# Run a script directly
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/single_score.R Q9W7E7
 ```
 
-4. Before running any EpicTope command, activate the local tool environment so BLAST/MUSCLE/DSSP are on your `PATH`:
+With `docker compose` the volumes are preconfigured, so you can simply run a
+script:
 
 ```bash
-source tools/activate
+docker compose run --rm epictope Rscript scripts/single_score.R Q9W7E7
 ```
-
-Note: on macOS there is no official prebuilt `mkdssp` binary. The installer will tell you to install it with Homebrew instead:
-
-```bash
-brew install brewsci/bio/dssp
-```
-
-Additional installation methods for Linux can be found in the Detailed Installation for Linux [page](https://github.com/FriedbergLab/Epictope/wiki/Detailed-Linux-Instructions)
-
-
-### Windows installation
-
-The installer downloads MUSCLE and DSSP (mkdssp) into a local `tools/` directory, runs the official BLAST+ installer, creates a uv-managed Python environment, and prints the R installation steps. Run PowerShell as Administrator (the BLAST+ installer requires it).
-
-1. From the project root, run the installer:
-
-```powershell
-powershell -ExecutionPolicy ByPass -File install/windows/install.ps1
-```
-
-2. Install R from [CRAN](https://cran.r-project.org/bin/windows/base/) if you do not already have it, then install the EpicTope R package and dependencies in R:
-
-```r
-install.packages(c("remotes","BiocManager"), repos="https://cloud.r-project.org")
-BiocManager::install("Biostrings")
-remotes::install_github("FriedbergLab/Epictope")
-```
-
-3. Before running any EpicTope command, dot-source the local tool environment so BLAST/MUSCLE/DSSP are on your `PATH`:
-
-```powershell
-.\tools\activate.ps1
-```
-
-More detailed instructions for Windows can be found in the Detailed Installation for Windows [page](https://github.com/FriedbergLab/Epictope/wiki/Detailed-Windows-Instructions)
 
 ## Usage
 
 Here, we provide usage examples to demonstrate how to use EpicTope. Each example includes a brief description and code snippets or commands to showcase the function. These examples assume the installation steps have been followed.
 
-### Example 1A: Generating EpicTope predictions on macOS/Linux
+### Example 1A: Generating EpicTope predictions
 
-For our example, we investigate the Smad5 gene for Zebrafish. Searching for the protein transcript in [Uniprot](https://www.uniprot.org/uniprotkb/Q9W7E7/entry), we find it's UniprotID is "Q9W7E7"
+For our example, we investigate the Smad5 gene for Zebrafish. Searching for the protein transcript in [Uniprot](https://www.uniprot.org/uniprotkb/Q9W7E7/entry), we find its UniProt ID is "Q9W7E7".
 
-Run the EpicTope workflow with the following commands in the terminal.
+Run the EpicTope workflow. With Docker (mounting `data` and `outputs`):
+
 ```bash
-source tools/activate
-Rscript install.R
-Rscript single_score.R Q9W7E7
-```
-
-### Example 1B: Generating EpicTope predictions on Windows
-
-On windows, the commands are the same as for Linux, except Windows uses a backwards slash "\\" instead of a forward slash "/".
-Run the EpicTope workflow with the following commands in the EpicTope environment (PowerShell).
-```powershell
-.\tools\activate.ps1
-Rscript install.R
-Rscript single_score.R Q9W7E7
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/install.R
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/single_score.R Q9W7E7
 ```
 
 ### Example 1C: Generating EpicTope predictions for custom AlphaFold structures
 
-Some UniProt entries do not have a corresponding AlphaFold prediction yet. To use a custom structure, first identify the Uniprot ID as described in example 1A, and select the "Sequence" tab (for example: [Q9W7E7](https://www.uniprot.org/uniprotkb/Q9W7E7/entry#sequences)). Submit the exact sequence to [AlphaFold](https://alphafoldserver.com/). Download the results, and copy one of the .cif files to the `data/models` directory of `epictope`. Finally, supply the path to the custom structure as a command-line input to `epictope`:
+Some UniProt entries do not have a corresponding AlphaFold prediction yet. To use a custom structure, first identify the UniProt ID as described in example 1A, and select the "Sequence" tab (for example: [Q9W7E7](https://www.uniprot.org/uniprotkb/Q9W7E7/entry#sequences)). Submit the exact sequence to [AlphaFold](https://alphafoldserver.com/). Download the results, and copy one of the .cif files into the mounted `data/models` directory. Finally, supply the path to the custom structure as a command-line argument:
+
 ```bash
-source tools/activate
-Rscript install.R
-Rscript single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif
 ```
-Sometimes, the user-supplied structure file may contain only one portion of the complete protein, for example, when the AlphaFold Server limits the user-supplied sequence. In this case, the first residue of the custom structure can be supplied as an addition argument (the N-terminal residue of the protein is residue 1). For example, if the custom structure starts at residue 57 of the protein:
-```
-Rscript single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif 57
+
+Sometimes, the user-supplied structure file may contain only one portion of the complete protein, for example, when the AlphaFold Server limits the user-supplied sequence. In this case, the first residue of the custom structure can be supplied as an additional argument (the N-terminal residue of the protein is residue 1). For example, if the custom structure starts at residue 57 of the protein:
+
+```bash
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif 57
 ```
 
 ### Example 2: Viewing your results.
 
 The EpicTope workflow generates a "\<UniprotID\>_score.csv" file (ex: Q9W7E7_score.csv), containing the individual feature scores for each position, the minimum score across features for each position, and a weighted sum score of all features. These values can be plotted in the data visualization tool of choice.
 
-For convenience, we provide a "plot_scores.R" scripts that generates a plot of the minimum score for each position in the sequence using a rolling average of window size 7.
-
-The plot script can be run in the same way as previous commands.
+For convenience, we provide a `scripts/plot_scores.R` script that generates a plot of the minimum score for each position in the sequence using a rolling average of window size 7.
 
 ```bash
-Rscript plot_scores.R outputs/Q9W7E7_score.csv
-"outputs/Q97W7E7.tiff"
+docker run --rm -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/plot_scores.R outputs/Q9W7E7_score.csv
 ```
+
+The output image is written next to the input CSV as `<input>_score.tiff` (e.g. `outputs/Q9W7E7_score.tiff`).
 
 <figure style="display: inline-block; text-align: center;">
   <img src="images/Q9W7E7_score.png" alt="Alt text" title="Tcf21 Multiple Sequence Alignment." width="50%">
@@ -175,8 +142,7 @@ Rscript plot_scores.R outputs/Q9W7E7_score.csv
 Example workflows with the EpicTope package are available in the **vignettes** folder. Workflows are available as both [R Markdown Documents](https://rmarkdown.rstudio.com/) and [Jupyter](https://jupyter.org/) notebooks. These workflows go through the EpicTope workflow step by step in an interactive session or an IDE. *IDE usage requires access to local installations of BLAST, MUSCLE, and DSSP by the IDE.*
 
 ### Macro scripts
-The scripts `install.R` and `single_score.R` are provided in the **scripts** folder of this repo to enable one-command operation.
-To run, download the `install.R` and `single_score.R` scripts from this repository either directly from the github page or using git clone.
+The scripts `install.R` and `single_score.R` are provided in the **scripts** folder of this repo to enable one-command operation (they require the `epictope` package, which the Docker image installs for you).
 
 - [install.R](https://github.com/FriedbergLab/EpicTope/blob/main/scripts/install.R)
   - This script first downloads the proteomes for the species used in the multiple sequence alignment from the NCBI FTP page.
@@ -190,18 +156,20 @@ To run, download the `install.R` and `single_score.R` scripts from this reposito
   - It then determines the secondary structure, solvent accessibility, and disordered binding regions for the protein.
   - It combines all feature scores into a summary dataframe.
   - The dataframe annotates each residue position with its feature scores and final tagging score.
-  - This file is saved to an /outputs folder with the name of the protein followed by '_score.csv'.
+  - This file is saved to an `outputs/` folder with the name of the protein followed by `_score.csv`.
   - For example, the protein used in the examples saves a "outputs/P57102_score.csv" file.
 
 
-From the terminal, these scripts can be run as follows.
+Run them inside the container (see [Installation](#installation)):
 
-```
-Rscript install.R 
-Rscript single_score.R "P57102" # replace 'P57102' with the UniprotID for your protein of interest.
+```bash
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/install.R
+docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  epictope Rscript scripts/single_score.R "P57102"  # replace with your UniProt ID
 ```
 
-Each script can also be opened in an IDE such as Rstudio, and run interactively line by line.
+Each script can also be opened in an IDE such as RStudio, and run interactively line by line (with the `epictope` package and BLAST/MUSCLE/mkdssp available on the PATH).
 
 ### User configuration
 
