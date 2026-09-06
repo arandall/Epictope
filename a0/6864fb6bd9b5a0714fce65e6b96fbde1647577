@@ -1,0 +1,26 @@
+.gitignore
+  h_e49bc6578e470a 5-6
+.python-version
+  h_e49bc6578e470a 1
+README.md
+  h_e49bc6578e470a 50,54,59,61-69,72-74,77-80,82-86,89,94,96-99,102-107,109-113,116,128,136-138,147
+install/mac_linux/install.sh
+  h_e49bc6578e470a 1-118
+install/windows/install.ps1
+  h_e49bc6578e470a 1-86
+pyproject.toml
+  h_e49bc6578e470a 1-17
+uv.lock
+  h_e49bc6578e470a 1-760
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "a06864fb6bd9b5a0714fce65e6b96fbde1647577",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
