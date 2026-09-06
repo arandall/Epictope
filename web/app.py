@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from web import config
 from web import uniprot
 from web import pipeline
+from web import parsing
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -52,3 +53,24 @@ async def run(req: RunReq, custom_structure: UploadFile | None = File(None)):
 @app.get("/api/jobs/{job_id}")
 def job(job_id: str):
     return pipeline.JobStore.get(job_id)
+
+@app.get("/api/results/{uniprot_id}/score")
+def result_score(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_score.csv"
+    if not p.exists():
+        return {"error": "not found"}, 404
+    return parsing.parse_score_csv(p)
+
+@app.get("/api/results/{uniprot_id}/msa")
+def result_msa(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_msa.fasta"
+    if not p.exists():
+        return {"error": "not found"}, 404
+    return parsing.parse_msa(p)
+
+@app.get("/api/results/{uniprot_id}/info")
+def result_info(uniprot_id: str):
+    meta = parsing.read_meta(uniprot_id)
+    if meta is None:
+        return {"error": "not found"}, 404
+    return meta
