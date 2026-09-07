@@ -1,0 +1,16 @@
+webui/src/run.ts
+  h_e49bc6578e470a 1-77
+webui/test/run.test.ts
+  h_e49bc6578e470a 1-91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "67d6a994dd6b6c44cbcef4f76d7e1df0e2970b7b",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
