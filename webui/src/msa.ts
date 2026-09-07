@@ -1,4 +1,8 @@
 import { bus } from "./sync";
+// Only the latest render's hover listener stays attached: re-registering on
+// every renderMsa call unsubscribes the previous closure (which referenced a
+// now-detached subtree).
+let unsub: (() => void) | null = null;
 export type CellColor = "red"|"blue"|"yellow";
 export function colorForColumn(seqs: string[], col: number): CellColor {
   const chars = seqs.map(s => s[col] ?? "-");
@@ -90,7 +94,8 @@ export function renderMsa(el: HTMLElement, msa: { query: string; records: { id: 
     strip.addEventListener("mouseleave", () => bus.setActive(null));
     row.appendChild(strip); viewport.appendChild(row);
   });
-  bus.onActive(pos => {
+  unsub?.();
+  unsub = bus.onActive(pos => {
     el.querySelectorAll<HTMLElement>(".cell").forEach(n => {
       const start = Number(n.dataset.start), end = Number(n.dataset.end);
       const qIdx = pos == null ? -1 : qpos.indexOf(pos);

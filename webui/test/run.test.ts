@@ -109,4 +109,35 @@ describe("mountRunPanel", () => {
     expect(onDone).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
   });
+
+  it("retries transient poll failures, then reports lost contact via onError", async () => {
+    // Last test in the file on purpose: this permanent impl must not leak.
+    vi.mocked(fetchJob).mockRejectedValue(new Error("network down"));
+    const root = document.createElement("div");
+    const onError = vi.fn();
+    const panel = mountRunPanel(root, vi.fn(), onError);
+    panel.select(hit);
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await vi.advanceTimersByTimeAsync(0);         // runPrediction resolves, first poll armed
+    await vi.advanceTimersByTimeAsync(5 * 1600);  // five consecutive failed polls (1500 ms apart)
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith("Q9W7E7", "lost contact with the server while running the prediction");
+  });
+
+  it("fires no onError after clear() while a failing poll is in flight", async () => {
+    let reject!: (e: Error) => void;
+    const gated = new Promise<never>((_, rej) => { reject = rej; });
+    vi.mocked(fetchJob).mockImplementationOnce(() => gated);
+    const root = document.createElement("div");
+    const onError = vi.fn();
+    const panel = mountRunPanel(root, vi.fn(), onError);
+    panel.select(hit);
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1600); // poll timer fires, fetchJob parked on gated rejection
+    panel.clear();
+    reject(new Error("network down"));       // failure lands after teardown
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(onError).not.toHaveBeenCalled();
+  });
 });

@@ -9,6 +9,11 @@ import { parseUrl, setUrl, onUrlChange } from "./state";
 import { bus } from "./sync";
 
 const $ = (id: string) => document.getElementById(id)!;
+// Escape client-controlled strings (e.g. ?id= deep link, server error detail)
+// before interpolating into innerHTML — error cards are the only sink fed
+// directly from the URL.
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 let chartHandle: MinChartHandle | null = null;
 let busUnsub: (() => void) | null = null;
 
@@ -52,7 +57,7 @@ async function showResults(acc: string) {
     $("results").hidden = true;
     $("searchZone").classList.remove("compact");
     $("errorBox").innerHTML = `<div class="card errorcard">
-      <h3>Prediction failed for ${acc}</h3><p>${e instanceof Error ? e.message : String(e)}</p>
+      <h3>Prediction failed for ${esc(acc)}</h3><p>${esc(e instanceof Error ? e.message : String(e))}</p>
       <button class="retry">Try again</button></div>`;
     $("errorBox").querySelector<HTMLButtonElement>(".retry")!.onclick = () => {
       $("errorBox").innerHTML = "";
@@ -63,7 +68,7 @@ async function showResults(acc: string) {
 
 function showError(acc: string, message: string) {
   $("errorBox").innerHTML = `<div class="card errorcard">
-    <h3>Prediction failed for ${acc}</h3><p>${message}</p>
+    <h3>Prediction failed for ${esc(acc)}</h3><p>${esc(message)}</p>
     <button class="retry">Try again</button></div>`;
   $("errorBox").querySelector<HTMLButtonElement>(".retry")!.onclick = () => {
     $("errorBox").innerHTML = "";
@@ -83,7 +88,14 @@ mountSearch($("search"), (hit: SearchHit) => {
 async function watchStatus() {
   const banner = $("banner");
   for (;;) {
-    const s = await fetchStatus();
+    let s: Awaited<ReturnType<typeof fetchStatus>>;
+    try {
+      s = await fetchStatus();
+    } catch {
+      // Transient failure (network blip, server restart): keep the loop alive.
+      await new Promise(r => setTimeout(r, 5000));
+      continue;
+    }
     if (s.installed) { banner.hidden = true; return; }
     banner.hidden = false;
     banner.textContent = `Preparing reference data — search works, predictions start when ready. ${s.progress || ""}`;

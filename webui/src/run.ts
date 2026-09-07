@@ -9,9 +9,21 @@ export function mountRunPanel(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let gen = 0;
 
-  const poll = (jobId: string, acc: string, g: number) => {
+  const poll = (jobId: string, acc: string, g: number, fails = 0) => {
     timer = setTimeout(async () => {
-      const job = await fetchJob(jobId);
+      let job: Awaited<ReturnType<typeof fetchJob>>;
+      try {
+        job = await fetchJob(jobId);
+      } catch {
+        // Transient failure (network blip, server restart): retry, then give up.
+        if (g !== gen) return; // panel was cleared or re-selected mid-await
+        if (fails + 1 >= 5) {
+          onError(acc, "lost contact with the server while running the prediction");
+          return;
+        }
+        poll(jobId, acc, g, fails + 1);
+        return;
+      }
       if (g !== gen) return; // panel was cleared or re-selected mid-await
       if (job.status === "done") { onDone(acc); return; }
       if (job.status === "error") { onError(acc, job.error ?? "unknown error"); return; }
