@@ -1,0 +1,26 @@
+web/static/assets/index-4ovLvwCA.css
+  h_e49bc6578e470a 1
+web/static/assets/index-DC6Aq_f2.js
+  h_e49bc6578e470a 1-79
+web/static/index.html
+  h_e49bc6578e470a 1-30
+webui/index.html
+  h_e49bc6578e470a 1-12,14,16-26,28-30
+webui/src/info.ts
+  h_e49bc6578e470a 2-30,32-35
+webui/src/main.ts
+  h_e49bc6578e470a 1-2,5-8,10-21,23-60,62-70,72-97
+webui/test/run.test.ts
+  h_e49bc6578e470a 7-10,40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "47a08e45b4c83135df10d070dec7db2a33cb078a",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
