@@ -1,0 +1,16 @@
+webui/src/downloads.ts
+  h_e49bc6578e470a 1-28
+webui/test/downloads.test.ts
+  h_e49bc6578e470a 1-36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "3a4f2582709363a2e18db3d514b3ba9407fc4f62",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
