@@ -73,3 +73,34 @@ def test_index_served():
     client = TestClient(app_module.app)
     if os.path.exists(str(config.APP_DIR / "web" / "static" / "index.html")):
         assert client.get("/").status_code == 200
+
+def test_score_csv_download(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"
+    d.mkdir()
+    (d / "Q9W7E7_score.csv").write_text("position,min\n1,0.5\n")
+    client = TestClient(app_module.app)
+    resp = client.get("/api/results/Q9W7E7/score.csv")
+    assert resp.status_code == 200
+    assert resp.text == "position,min\n1,0.5\n"
+    assert "attachment" in resp.headers["content-disposition"]
+    assert "Q9W7E7_score.csv" in resp.headers["content-disposition"]
+
+def test_msa_fasta_download(tmp_path, monkeypatch):
+    import web.config as cfg
+    monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
+    d = tmp_path / "Q9W7E7"
+    d.mkdir()
+    (d / "Q9W7E7_msa.fasta").write_text(">Q9W7E7\nMKV\n")
+    client = TestClient(app_module.app)
+    resp = client.get("/api/results/Q9W7E7/msa.fasta")
+    assert resp.status_code == 200
+    assert resp.text == ">Q9W7E7\nMKV\n"
+    assert "attachment" in resp.headers["content-disposition"]
+    assert "Q9W7E7_msa.fasta" in resp.headers["content-disposition"]
+
+def test_downloads_404_for_unknown_id():
+    client = TestClient(app_module.app)
+    assert client.get("/api/results/NOPE/score.csv").status_code == 404
+    assert client.get("/api/results/NOPE/msa.fasta").status_code == 404

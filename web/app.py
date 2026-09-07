@@ -75,6 +75,22 @@ def result_info(uniprot_id: str):
         raise HTTPException(status_code=404, detail="no metadata for this ID")
     return meta
 
+from fastapi.responses import FileResponse
+
+@app.get("/api/results/{uniprot_id}/score.csv")
+def result_score_csv(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_score.csv"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="no score result for this ID")
+    return FileResponse(p, media_type="text/csv", filename=f"{uniprot_id}_score.csv")
+
+@app.get("/api/results/{uniprot_id}/msa.fasta")
+def result_msa_fasta(uniprot_id: str):
+    p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_msa.fasta"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="no MSA result for this ID")
+    return FileResponse(p, media_type="text/plain", filename=f"{uniprot_id}_msa.fasta")
+
 from fastapi.staticfiles import StaticFiles
 # check_dir=False: web/static doesn't exist until the first frontend build, and
 # the backend test suite imports this app before then.
