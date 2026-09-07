@@ -194,9 +194,16 @@ docker compose up --build
 
 Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
-1. Search for a protein by name, or paste a UniProt accession, and pick the right entry from the search results (the same UniProt IDs used in the examples above).
-2. Start the prediction for that protein. You can optionally upload a custom AlphaFold structure and set the N-terminal residue offset, as described in [example 1C](#example-1c-generating-epictope-predictions-for-custom-alphafold-structures).
-3. When the run finishes, the page shows an interactive score chart, the multiple sequence alignment, and a per-residue feature table.
+1. Type a gene name, accession, or organism in the search box and pick the right
+   UniProt entry from the autocomplete (badges show reviewed status and whether an
+   AlphaFold model exists).
+2. Click **Run prediction**. If the protein has no AlphaFold model, expand
+   **Advanced options** first to upload a custom `.cif` structure and set the
+   N-terminal residue, as described in [example 1C](#example-1c-generating-epictope-predictions-for-custom-alphafold-structures).
+3. When the run finishes, the page shows the tagging-score chart (minimum feature
+   score per position, with a window-7 smoothed overlay and marked top sites), the
+   multiple sequence alignment in a scrollable panel, and download buttons for the
+   score CSV, the MSA FASTA, a chart PNG, and a print/PDF report.
 
 Results are cached on disk under `outputs/<UniProtID>/` (e.g. `outputs/Q9W7E7/`), so reloading the page or re-running the same protein reuses the stored results instead of recomputing them.
 
