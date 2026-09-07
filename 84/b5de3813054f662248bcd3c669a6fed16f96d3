@@ -1,0 +1,24 @@
+web/static/assets/index-ygfZEF5H.js
+  h_e49bc6578e470a 1,6,11,16,18,23,29,34-35,48,54,74-79
+web/static/index.html
+  h_e49bc6578e470a 7
+webui/src/main.ts
+  h_e49bc6578e470a 12-16,60,71,91-98
+webui/src/msa.ts
+  h_e49bc6578e470a 2-5,97-98
+webui/src/run.ts
+  h_e49bc6578e470a 12,14-26
+webui/test/run.test.ts
+  h_e49bc6578e470a 112-142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "84b5de3813054f662248bcd3c669a6fed16f96d3",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
