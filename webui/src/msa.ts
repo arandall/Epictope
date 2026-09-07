@@ -77,12 +77,14 @@ export function renderMsa(el: HTMLElement, msa: { query: string; records: { id: 
       strip.appendChild(s);
       col += run.text.length;
     }
-    // Delegated hover: monospace strip => column = offsetX / char width.
+    // Delegated hover: column from pointer x relative to the strip (clientX - rect.left;
+    // offsetX would be relative to the innermost .cell target, not the strip).
     strip.addEventListener("mousemove", (e) => {
-      const w = strip.getBoundingClientRect().width;
+      const rect = strip.getBoundingClientRect();
       const len = rec.seq.length;
-      if (w <= 0 || len === 0) return;
-      const c = Math.min(len - 1, Math.max(0, Math.floor((e.offsetX / w) * len)));
+      if (rect.width <= 0 || len === 0) return;
+      const x = e.clientX - rect.left;
+      const c = Math.min(len - 1, Math.max(0, Math.floor((x / rect.width) * len)));
       bus.setActive(qpos[c]);
     });
     strip.addEventListener("mouseleave", () => bus.setActive(null));

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { colorForColumn, queryPositions, colorRuns, renderMsa } from "../src/msa";
+import { bus } from "../src/sync";
 describe("colorForColumn", () => {
   it("red when all identical", () => expect(colorForColumn(["A","A","A"],0)).toBe("red"));
   it("blue when differing", () => expect(colorForColumn(["A","C","A"],0)).toBe("blue"));
@@ -48,5 +49,23 @@ describe("colorRuns", () => {
     expect(tick[9]).toBe("|");
     expect(tick[19]).toBe("|");
     expect(tick[0]).toBe(" ");
+  });
+  it("maps strip-relative mouse x to the hovered column and clears on mouseleave", () => {
+    document.body.innerHTML = "";
+    const el = document.createElement("div");
+    document.body.appendChild(el);
+    const seq = "ACDEFGHIKL"; // 10 gapless query columns => qpos[c] = c + 1
+    renderMsa(el, { query: "Q", records: [{ id: "Q", seq }, { id: "M", seq: "MCDEFGHIKL" }, { id: "G", seq: "GCDEFGHIKL" }] });
+    const qRow = Array.from(el.querySelectorAll(".msarow")).find(r => r.querySelector(".msaname")?.textContent === "Q")!;
+    const strip = qRow.querySelector(".msastrip") as HTMLElement;
+    const rect = { left: 100, width: 500, top: 0, right: 600, bottom: 10, height: 10, x: 100, y: 0, toJSON: () => rect } as DOMRect;
+    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue(rect);
+    const setActive = vi.spyOn(bus, "setActive").mockImplementation(() => {});
+    // pointer at 50% of the strip => column 5 => residue 6 in a gapless query row
+    strip.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 + 250 }));
+    expect(setActive).toHaveBeenCalledWith(6);
+    strip.dispatchEvent(new MouseEvent("mouseleave"));
+    expect(setActive).toHaveBeenLastCalledWith(null);
+    vi.restoreAllMocks();
   });
 });
