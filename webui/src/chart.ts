@@ -1,10 +1,11 @@
-import { Chart, LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale } from "chart.js";
+import { Chart, LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, Filler } from "chart.js";
 import annotationPlugin from "chartjs-plugin-annotation";
-Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, annotationPlugin);
+import zoomPlugin from "chartjs-plugin-zoom";
+Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, Filler, annotationPlugin, zoomPlugin);
 
 export interface TopSite { position: number; min: number; min_feature: string; }
 
-// Local-maxima peak detection — MUST match web/parsing.compute_top_sites (Task 5.5):
+// Local-maxima peak detection — MUST match web/parsing.compute_top_sites:
 // a residue is a candidate only if its `min` strictly exceeds both neighbours.
 export function topSites(rows: any[], n = 5): TopSite[] {
   const peaks: TopSite[] = [];
@@ -36,67 +37,115 @@ export function movingAverage(rows: any[], key: string, window = 7): number[] {
 
 let hoverCb: ((pos: number | null) => void) | null = null;
 
-// Index of the emphasized raw `min` dataset; highlight() pins tooltips to it.
-export const MIN_DATASET_INDEX = 5;
+// The emphasized raw `min` dataset; highlight() pins tooltips to it.
+export const MIN_DATASET_INDEX = 0;
 
-// `top` is the precomputed TopSite[] (from topSites) used for vertical annotations.
-// All tracks are drawn RAW so spikes land exactly on their residue (goal #5);
-// the only smoothed line is the dashed `min` overlay mirroring plot_scores.R.
-export function renderScoreChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]) {
-  const raw = (key: string, color: string, width = 1) => ({
-    label: key,
-    // parsing:false requires pre-parsed {x,y} points; plain numbers leave parsed[axis]
-    // undefined and every point is skipped (empty chart, degenerate scales).
-    data: rows.map(r => ({ x: Number(r.position), y: Number(r[key]) })),
-    borderColor: color,
-    backgroundColor: color,
-    pointRadius: 0,
-    borderWidth: width,
-    tension: 0.15,
-  });
-  const chart = new Chart(canvas, {
-    type: "line",
+export interface MinChartHandle {
+  chart: Chart;
+  setHoverCallback(cb: (pos: number | null) => void): void;
+  highlight(pos: number | null): void;
+  pin(pos: number | null): void;
+  exportPng(): string;
+}
+
+function siteAnnotation(s: TopSite) {
+  return {
+    type: "line" as const, scaleID: "x", value: s.position,
+    borderColor: "#b91c1c", borderWidth: 1, borderDash: [4, 4],
+    label: { display: true, content: `#${s.position}`, position: "start" as const,
+             color: "#b91c1c", font: { size: 10 } },
+  };
+}
+
+// Paper-faithful chart (Fig 2C / plot_scores.R): raw `min` filled area +
+// dashed window-7 smoothed overlay + top-site markers. Nothing else.
+export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]): MinChartHandle {
+  const annotations: Record<string, any> = Object.fromEntries(
+    top.map((s, i) => [`top${i}`, siteAnnotation(s)]));
+  const chart = new Chart(canvas, {    type: "line",
     data: { datasets: [
-      raw("normalized_entropy", "#888"), raw("ss_score", "#2a9d8f"),
-      raw("rsa", "#e9c46a"), raw("inv_anchor2", "#e76f51"),
-      raw("sum_score", "#457b9d"),
-      raw("min", "#d62828", 2.5),  // index 5 = MIN_DATASET_INDEX (emphasized)
-      { label: "min (smoothed)", data: movingAverage(rows, "min", 7).map((y, i) =>
-          ({ x: Number(rows[i].position), y })),
-        borderColor: "#7f1d1d", backgroundColor: "#7f1d1d",
-        borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
+      { label: "min",
+        data: rows.map(r => ({ x: Number(r.position), y: Number(r.min) })),
+        borderColor: "#0d9488", backgroundColor: "rgba(13,148,136,0.15)",
+        fill: true, pointRadius: 0, borderWidth: 2, tension: 0.15 },
+      { label: "min (smoothed)",
+        data: movingAverage(rows, "min", 7).map((y, i) => ({ x: Number(rows[i].position), y })),
+        borderColor: "#134e4a", borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
     ] },
     options: {
       parsing: false,
+      interaction: { mode: "index", intersect: false },
       scales: {
         x: { type: "linear", title: { display: true, text: "Amino acid position" } },
-        y: { title: { display: true, text: "Score (0-1)" } },
+        y: { min: 0, max: 1, title: { display: true, text: "Minimum feature score (0–1)" } },
       },
+      onClick: (_, els) => { if (els.length === 0) handle.pin(null); },
       plugins: {
+        legend: { labels: { boxWidth: 12 } },
         tooltip: { callbacks: {
           title: (items) => { const r = rows[items[0].dataIndex];
             return `Position ${r.position} (${r.aa}) · min ${r.min}`; },
-          label: (it) => `${it.dataset.label}: ${it.formattedValue}`,
+          label: (it) => `${it.dataset.label}: ${it.formattedValue} · limiting: ${rows[it.dataIndex].min_feature}`,
         } },
-        annotation: { annotations: Object.fromEntries(
-          top.map((s, i) => [`top${i}`, {
-            type: "line", scaleID: "x", value: s.position,
-            borderColor: "#d62828", borderWidth: 1, borderDash: [4, 4],
-            label: { display: true, content: `#${s.position}`, position: "start" },
-          }])) },
+        annotation: { annotations },
+        zoom: {
+          pan: { enabled: true, mode: "x", modifierKey: "shift" },
+          zoom: { drag: { enabled: true }, wheel: { enabled: true, modifierKey: "ctrl" },
+                  pinch: { enabled: true }, mode: "x",
+                  onZoom: ({ chart: c }) => showReset(c) },
+        },
       },
       onHover: (_, els) => { if (hoverCb) hoverCb(els.length ? rows[els[0].index].position : null); },
     },
   });
-  return {
+
+  // "Reset zoom" appears after the first zoom and removes itself on reset.
+  function showReset(c: Chart) {
+    if (canvas.parentElement!.querySelector("button.resetzoom")) return;
+    const btn = document.createElement("button");
+    btn.className = "resetzoom";
+    btn.textContent = "Reset zoom";
+    btn.onclick = () => { c.resetZoom(); btn.remove(); };
+    canvas.parentElement!.appendChild(btn);
+  }
+
+  const handle: MinChartHandle = {
     chart,
-    setHoverCallback: (cb: (pos: number | null) => void) => { hoverCb = cb; },
-    highlight: (pos: number | null) => {
+    setHoverCallback: (cb) => { hoverCb = cb; },
+    highlight: (pos) => {
       const idx = pos == null ? -1 : rows.map(r => Number(r.position)).indexOf(pos);
       const ae = idx < 0 ? [] : [{ datasetIndex: MIN_DATASET_INDEX, index: idx }];
       chart.setActiveElements(ae);
       chart.tooltip?.setActiveElements(ae, { x: 0, y: 0 });
       chart.update();
     },
+    pin: (pos) => {
+      const anns = (chart.options.plugins as any).annotation.annotations as Record<string, any>;
+      if (pos == null) delete anns.pinned;
+      else anns.pinned = { ...siteAnnotation({ position: pos, min: 0, min_feature: "" }),
+                           borderColor: "#0f172a", borderWidth: 2, borderDash: [],
+                           label: { display: true, content: `▸ #${pos}`, position: "start",
+                                    color: "#0f172a", font: { size: 11, weight: "bold" } } };
+      chart.update();
+    },
+    // 2x, white background: draw the chart onto an offscreen canvas at 2x size.
+    exportPng: () => {
+      const src = chart.canvas;
+      const out = document.createElement("canvas");
+      out.width = src.width * 2;
+      out.height = src.height * 2;
+      const ctx = out.getContext("2d")!;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, out.width, out.height);
+      ctx.scale(2, 2);
+      ctx.drawImage(src, 0, 0);
+      return out.toDataURL("image/png");
+    },
   };
+
+  // Escape unpins (canvas is made focusable for keyboard access).
+  canvas.tabIndex = 0;
+  canvas.addEventListener("keydown", (e) => { if (e.key === "Escape") handle.pin(null); });
+
+  return handle;
 }
