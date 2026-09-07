@@ -1,0 +1,20 @@
+webui/src/api.ts
+  h_e49bc6578e470a 9-19,31-34
+webui/src/run.ts
+  h_e49bc6578e470a 10,12,15,18,24,55,63-64,66,79
+webui/test/api.test.ts
+  h_e49bc6578e470a 1-41
+webui/test/run.test.ts
+  h_e49bc6578e470a 4,91-109
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "ebaa7098b4d1162f2f954b872357c90c50da5010",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
