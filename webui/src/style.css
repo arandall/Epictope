@@ -123,3 +123,8 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
   .msaviewport { max-height: none; overflow: visible; border: none; }
   .chartwrap { height: auto; }
 }
+
+/* Dark mode: keep glyphs readable on hardcoded light fills */
+@media (prefers-color-scheme: dark) {
+  .cell.blue, .cell.yellow, .seqstrip .res.active { color: #0f172a; }
+}
