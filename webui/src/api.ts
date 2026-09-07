@@ -6,6 +6,16 @@ export const fetchStatus = () => fetch("/api/status").then(J);
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
 
+// GET a results endpoint; a non-ok response is an ApiError carrying the server's detail.
+const getJson = async (url: string) => {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const detail = (await r.json().catch(() => ({})))?.detail ?? r.statusText;
+    throw new ApiError(r.status, String(detail));
+  }
+  return r.json();
+};
+
 export const runPrediction = async (uniprot_id: string, n_terminal: number | null, file: File | null) => {
   const fd = new FormData(); fd.append("uniprot_id", uniprot_id);
   if (n_terminal != null) fd.append("n_terminal", String(n_terminal));
@@ -17,7 +27,7 @@ export const runPrediction = async (uniprot_id: string, n_terminal: number | nul
   }
   return r.json() as Promise<{ job_id: string }>;
 };
-export const fetchJob = (id: string) => fetch(`/api/jobs/${id}`).then(J);
-export const fetchScore = (id: string) => fetch(`/api/results/${id}/score`).then(J);
-export const fetchMsa = (id: string) => fetch(`/api/results/${id}/msa`).then(J);
-export const fetchInfo = (id: string) => fetch(`/api/results/${id}/info`).then(J);
+export const fetchJob = (id: string) => getJson(`/api/jobs/${id}`);
+export const fetchScore = (id: string) => getJson(`/api/results/${id}/score`);
+export const fetchMsa = (id: string) => getJson(`/api/results/${id}/msa`);
+export const fetchInfo = (id: string) => getJson(`/api/results/${id}/info`);

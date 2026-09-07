@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mountRunPanel } from "../src/run";
-import { ApiError } from "../src/api";
+import { ApiError, fetchJob } from "../src/api";
 
 const jobs: Record<string, { status: string }> = { "job-1": { status: "running" } };
 let runMock = vi.fn(async () => ({ job_id: "job-1" }));
@@ -87,5 +87,24 @@ describe("mountRunPanel", () => {
     panel.select(hit);
     panel.clear();
     expect(root.innerHTML).toBe("");
+  });
+
+  it("stops the poll chain and fires no callbacks after clear() while a poll is in flight", async () => {
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    let release!: (v: { status: string }) => void;
+    const gated = new Promise<{ status: string }>((res) => { release = res; });
+    vi.mocked(fetchJob).mockImplementationOnce(() => gated);
+    const root = document.createElement("div");
+    const panel = mountRunPanel(root, onDone, onError);
+    panel.select(hit);
+    (root.querySelector("button.primary") as HTMLButtonElement).click();
+    await vi.advanceTimersByTimeAsync(0);     // runPrediction resolves, poll timer armed
+    await vi.advanceTimersByTimeAsync(1600);  // poll timer fires, fetchJob await parked on gated
+    panel.clear();                            // panel torn down mid-await
+    release({ status: "done" });              // poll callback resumes after teardown
+    await vi.advanceTimersByTimeAsync(10000); // ample time for any re-arm or callback
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 });

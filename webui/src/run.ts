@@ -7,18 +7,21 @@ export function mountRunPanel(
   onError: (acc: string, message: string) => void,
 ) {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let gen = 0;
 
-  const poll = (jobId: string, acc: string) => {
+  const poll = (jobId: string, acc: string, g: number) => {
     timer = setTimeout(async () => {
       const job = await fetchJob(jobId);
+      if (g !== gen) return; // panel was cleared or re-selected mid-await
       if (job.status === "done") { onDone(acc); return; }
       if (job.status === "error") { onError(acc, job.error ?? "unknown error"); return; }
-      poll(jobId, acc);
+      poll(jobId, acc, g);
     }, 1500);
   };
 
   return {
     select(hit: SearchHit): void {
+      gen += 1;
       root.innerHTML = `
         <div class="card selected">
           <div class="selmain">
@@ -49,6 +52,7 @@ export function mountRunPanel(
         .catch(() => { /* not cached — keep "Run prediction" */ });
       btn.onclick = async () => {
         if (cached) { onDone(hit.accession); return; }
+        const g = gen;
         btn.disabled = true;
         progress.hidden = false;
         progress.textContent = `Running prediction for ${hit.accession}… this can take several minutes.`;
@@ -56,8 +60,10 @@ export function mountRunPanel(
         const file = root.querySelector<HTMLInputElement>(".cif")!.files?.[0] ?? null;
         try {
           const { job_id } = await runPrediction(hit.accession, nterm ? Number(nterm) : null, file);
-          poll(job_id, hit.accession);
+          if (g !== gen) return; // cleared or re-selected while POSTing
+          poll(job_id, hit.accession, g);
         } catch (e) {
+          if (g !== gen) return; // cleared or re-selected mid-request: no callbacks
           btn.disabled = false;
           if (e instanceof ApiError && e.status === 503) {
             // Reference data still downloading: keep the panel usable, show why.
@@ -70,6 +76,7 @@ export function mountRunPanel(
       };
     },
     clear(): void {
+      gen += 1;
       if (timer) clearTimeout(timer);
       root.innerHTML = "";
     },
