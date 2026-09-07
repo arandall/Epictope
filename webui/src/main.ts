@@ -1,46 +1,97 @@
-import { fetchSearch, runPrediction, fetchJob, fetchScore, fetchInfo, fetchMsa } from "./api";
-import { renderScoreChart, topSites } from "./chart";
+import { fetchScore, fetchInfo, fetchMsa, fetchStatus } from "./api";
+import { renderMinChart, topSites, type MinChartHandle } from "./chart";
 import { renderSequence } from "./sequence";
 import { renderMsa } from "./msa";
-import { renderInfo } from "./info";
-import { renderTable } from "./table";
+import { renderResultsHeader } from "./info";
+import { mountSearch, type SearchHit } from "./search";
+import { mountRunPanel } from "./run";
+import { parseUrl, setUrl, onUrlChange } from "./state";
 import { bus } from "./sync";
-const $ = (id:string)=>document.getElementById(id)!;
-let chartHandle: any = null;
 
-$("searchBtn").onclick = async () => {
-  const rows:any[] = await fetchSearch(($("search") as HTMLInputElement).value);
-  ($("results") as HTMLElement).innerHTML = rows.map((r:any)=>
-    `<div class="res"><b>${r.accession}</b> ${r.gene} ${r.organism}
-     ${r.reviewed?"<span class=tag>reviewed</span>":""}
-     ${r.hasAlphaFold?"<span class=tag>AF</span>":""}
-     <button data-acc="${r.accession}">Run</button></div>`).join("");
-  ($("results") as HTMLElement).querySelectorAll<HTMLElement>("button[data-acc]").forEach(b=>{
-    b.onclick=()=>startRun((b as HTMLElement).dataset.acc!);
-  });
-};
-async function startRun(acc: string) {
-  const nterm = ($("nterm") as HTMLInputElement).value;
-  const file = ($("cif") as HTMLInputElement).files?.[0] ?? null;
-  const { job_id } = await runPrediction(acc, nterm?Number(nterm):null, file);
-  poll(job_id, acc);
+const $ = (id: string) => document.getElementById(id)!;
+let chartHandle: MinChartHandle | null = null;
+
+function showSkeletons() {
+  $("results").hidden = false;
+  $("searchZone").classList.add("compact");
+  $("errorBox").innerHTML = "";
+  $("reshead").innerHTML = "";
+  for (const id of ["chartCard", "seqCard", "msaCard"]) {
+    $(id).innerHTML = `<div class="skeleton"></div>`;
+  }
 }
-async function poll(job_id:string, acc:string) {
-  const job:any = await fetchJob(job_id);
-  if (job.status === "done") return showResults(acc);
-  if (job.status === "error") { ($("info") as HTMLElement).textContent = "Error: "+job.error; return; }
-  setTimeout(()=>poll(job_id, acc), 1500);
+
+async function showResults(acc: string) {
+  try {
+    showSkeletons();
+    const [rows, info, msa] = await Promise.all([fetchScore(acc), fetchInfo(acc), fetchMsa(acc)]);
+    $("results").hidden = false;
+    $("searchZone").classList.add("compact");
+    if (chartHandle) { chartHandle.chart.destroy(); chartHandle = null; }
+    $("chartCard").innerHTML = `<p class="overline">Tagging score</p>
+      <div class="chartwrap"><canvas id="chart"></canvas></div>`;
+    chartHandle = renderMinChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
+    renderResultsHeader($("reshead"), info,
+      (pos) => chartHandle!.pin(pos),
+      () => {
+        if (!chartHandle) return;
+        const a = document.createElement("a");
+        a.href = chartHandle.exportPng();
+        a.download = `${acc}_min_score.png`;
+        document.body.appendChild(a); a.click(); a.remove();
+      });
+    $("seqCard").innerHTML = `<p class="overline">Query sequence</p><div id="sequence"></div>`;
+    renderSequence($("sequence"), rows);
+    $("msaCard").innerHTML = `<p class="overline">Multiple sequence alignment</p><div id="msa"></div>`;
+    renderMsa($("msa"), msa);
+    chartHandle.setHoverCallback((pos) => bus.setActive(pos));
+    bus.onActive((pos) => chartHandle?.highlight(pos));
+  } catch (e) {
+    // fetchScore/fetchInfo/fetchMsa reject with ApiError (e.g. stale ?id= deep link).
+    $("results").hidden = true;
+    $("searchZone").classList.remove("compact");
+    $("errorBox").innerHTML = `<div class="card errorcard">
+      <h3>Prediction failed for ${acc}</h3><p>${e instanceof Error ? e.message : String(e)}</p>
+      <button class="retry">Try again</button></div>`;
+    $("errorBox").querySelector<HTMLButtonElement>(".retry")!.onclick = () => {
+      $("errorBox").innerHTML = "";
+      showResults(acc);
+    };
+  }
 }
-async function showResults(acc:string) {
-  const rows:any[] = await fetchScore(acc);
-  const info:any = await fetchInfo(acc);
-  renderInfo($("info") as HTMLElement, info);
-  if (chartHandle) chartHandle.chart.destroy();
-  chartHandle = renderScoreChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
-  renderSequence($("sequence") as HTMLElement, rows);
-  renderTable($("table") as HTMLElement, rows);
-  const msa = await fetchMsa(acc);
-  renderMsa($("msa") as HTMLElement, msa);
-  chartHandle.setHoverCallback((pos:number|null)=>bus.setActive(pos));
-  bus.onActive((pos)=>chartHandle.highlight(pos));
+
+function showError(acc: string, message: string) {
+  $("errorBox").innerHTML = `<div class="card errorcard">
+    <h3>Prediction failed for ${acc}</h3><p>${message}</p>
+    <button class="retry">Try again</button></div>`;
+  $("errorBox").querySelector<HTMLButtonElement>(".retry")!.onclick = () => {
+    $("errorBox").innerHTML = "";
+    location.reload();
+  };
 }
+
+const runPanel = mountRunPanel($("runPanel"), (acc) => { setUrl(acc); showResults(acc); }, showError);
+
+mountSearch($("search"), (hit: SearchHit) => {
+  $("errorBox").innerHTML = "";
+  setUrl(hit.accession);
+  runPanel.select(hit);
+});
+
+// Install-progress banner + run gating.
+async function watchStatus() {
+  const banner = $("banner");
+  for (;;) {
+    const s = await fetchStatus();
+    if (s.installed) { banner.hidden = true; return; }
+    banner.hidden = false;
+    banner.textContent = `Preparing reference data — search works, predictions start when ready. ${s.progress || ""}`;
+    await new Promise(r => setTimeout(r, 5000));
+  }
+}
+watchStatus();
+
+// Deep link + browser back/forward: ?id=<acc> restores results from cache.
+const initial = parseUrl();
+if (initial) showResults(initial);
+onUrlChange((acc) => { if (acc) showResults(acc); });

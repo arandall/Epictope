@@ -4,8 +4,10 @@ import { mountRunPanel } from "../src/run";
 import { ApiError, fetchJob } from "../src/api";
 
 const jobs: Record<string, { status: string }> = { "job-1": { status: "running" } };
-let runMock = vi.fn(async () => ({ job_id: "job-1" }));
-let scoreMock = vi.fn(async () => { const e = new Error("404"); throw e; }); // default: not cached
+// vitest 1.5 Mock instances are not mutually assignable across reassignment
+// (this-typed methods), so the swappable mocks are typed loosely on purpose.
+let runMock: any = vi.fn(async () => ({ job_id: "job-1" }));
+let scoreMock: any = vi.fn(async () => { const e = new Error("404"); throw e; }); // default: not cached
 vi.mock("../src/api", () => ({
   ApiError: class extends Error { constructor(public status: number, m: string) { super(m); } },
   runPrediction: (...a: any[]) => runMock(...a),
@@ -35,7 +37,7 @@ describe("mountRunPanel", () => {
     panel.select(hit);
     expect(root.textContent).toContain("smad5");
     expect(root.textContent).toContain("Q9W7E7");
-    const details = root.querySelector("details.advanced")!;
+    const details = root.querySelector<HTMLDetailsElement>("details.advanced")!;
     expect(details.open).toBe(false);
     expect(details.textContent).toContain("optional");
     expect((root.querySelector("button.primary") as HTMLButtonElement).textContent).toContain("Run prediction");
