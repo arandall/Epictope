@@ -10,6 +10,7 @@ import { bus } from "./sync";
 
 const $ = (id: string) => document.getElementById(id)!;
 let chartHandle: MinChartHandle | null = null;
+let busUnsub: (() => void) | null = null;
 
 function showSkeletons() {
   $("results").hidden = false;
@@ -45,7 +46,7 @@ async function showResults(acc: string) {
     $("msaCard").innerHTML = `<p class="overline">Multiple sequence alignment</p><div id="msa"></div>`;
     renderMsa($("msa"), msa);
     chartHandle.setHoverCallback((pos) => bus.setActive(pos));
-    bus.onActive((pos) => chartHandle?.highlight(pos));
+    busUnsub?.(); busUnsub = bus.onActive((pos) => chartHandle?.highlight(pos));
   } catch (e) {
     // fetchScore/fetchInfo/fetchMsa reject with ApiError (e.g. stale ?id= deep link).
     $("results").hidden = true;
