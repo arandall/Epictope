@@ -1,0 +1,16 @@
+webui/src/chart.ts
+  h_e49bc6578e470a 4,57-58,72-73,85-89,92-101,128,131-139,168
+webui/test/chart.test.ts
+  h_e49bc6578e470a 77-101,131-132,137-141,144
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "344a1781530f27dd1e4e490dd44cd79cc5d5e6d1",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
