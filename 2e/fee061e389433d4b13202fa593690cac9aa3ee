@@ -1,0 +1,22 @@
+tests/web/test_parsing.py
+  h_e49bc6578e470a 32-41
+web/app.py
+  h_e49bc6578e470a 69
+web/parsing.py
+  h_e49bc6578e470a 27,40-44
+webui/src/msa.ts
+  h_e49bc6578e470a 2-3,5-8,15-21,30-35,37,50-116,119,121-124,126-127,129-184,186-215,217,220-221
+webui/test/msa.test.ts
+  h_e49bc6578e470a 2-3,36-49,53-59,61-66,69-101,103-111,115-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "2efee061e389433d4b13202fa593690cac9aa3ee",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
