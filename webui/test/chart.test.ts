@@ -148,6 +148,23 @@ describe("renderMinChart", () => {
     expect((chart.options.plugins as any).annotation.annotations.pinned).toBeUndefined();
     expect(bus.marked).toBeNull();
   });
+  it("clicking the marked point again deselects it", async () => {
+    const { bus } = await import("../src/sync");
+    const { chart } = makeChart();
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 2 }]);
+    expect(bus.marked).toBe(3);
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 2 }]);
+    expect((chart.options.plugins as any).annotation.annotations.pinned).toBeUndefined();
+    expect(bus.marked).toBeNull();
+  });
+  it("clicking a different point re-marks without deselecting", async () => {
+    const { bus } = await import("../src/sync");
+    const { chart } = makeChart();
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 2 }]);
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 4 }]);
+    expect((chart.options.plugins as any).annotation.annotations.pinned.value).toBe(5);
+    expect(bus.marked).toBe(5);
+  });
   it("clicking a point fires the click callback with its position; empty area fires null", () => {
     const { chart, setClickCallback } = makeChart();
     const cb = vi.fn();

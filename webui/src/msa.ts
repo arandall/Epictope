@@ -152,7 +152,7 @@ export function renderMsa(
 
   const head = document.createElement("div");
   head.className = "msahead";
-  head.innerHTML = `<span class="legend"><i class="sw red"></i>conserved <i class="sw blue"></i>differs <i class="sw yellow"></i>gap · one letter = one position · click a column to mark it</span>`;
+  head.innerHTML = `<span class="legend"><i class="sw red"></i>conserved <i class="sw blue"></i>differs <i class="sw yellow"></i>gap · one letter = one position · click a column to mark or unmark it</span>`;
   el.appendChild(head);
   const viewport = document.createElement("div");
   viewport.className = "msaviewport";
@@ -211,7 +211,12 @@ export function renderMsa(
       strip.addEventListener("mouseleave", () => { clearRange(strip); tip.hidden = true; bus.setActive(null); });
       strip.addEventListener("click", (e) => {
         const t = (e.target as HTMLElement).closest<HTMLElement>(".cell");
-        if (t && strip.contains(t)) opts.onPositionClick?.(qpos[Number(t.dataset.col)] ?? null);
+        if (t && strip.contains(t)) {
+          const pos = qpos[Number(t.dataset.col)] ?? null;
+          // Toggle: clicking the marked column again deselects.
+          const next = pos != null && pos === bus.marked ? null : pos;
+          opts.onPositionClick?.(next);
+        }
       });
       row.appendChild(strip);
       block.appendChild(row);

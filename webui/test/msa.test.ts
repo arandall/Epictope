@@ -175,6 +175,17 @@ describe("renderMsa", () => {
     expect(onPositionClick).toHaveBeenCalledWith(null); // gap column
   });
 
+  it("clicking the marked column again reports null (toggle deselect)", () => {
+    const { el, onPositionClick } = mountMsa([{ id: "Q", seq: "ACDEF" }], "Q");
+    bus.setMarked(2); // residue 2 -> column 1, as if it was clicked before
+    const strip = el.querySelector(".msarow.queryrow .msastrip")!;
+    strip.querySelectorAll<HTMLElement>(".cell")[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onPositionClick).toHaveBeenCalledWith(null);
+    strip.querySelectorAll<HTMLElement>(".cell")[3].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onPositionClick).toHaveBeenLastCalledWith(4); // other columns still select
+    bus.setMarked(null); // don't leak marked state into later tests
+  });
+
   it("markPosition highlights the matching column in every chunk row and clears on null", () => {
     const { el, handle } = mountMsa([{ id: "Q", seq: "ACDEF" }, { id: "M", seq: "ACDEF" }], "Q", 3);
     handle.markPosition(2); // residue 2 -> column 1

@@ -155,9 +155,11 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       },
       onClick: (_, els) => {
         const pos = els.length ? Number(rows[els[0].index].position) : null;
-        handle.pin(pos);
-        bus.setMarked(pos);
-        clickCb?.(pos);
+        // Toggle: clicking the marked point again (or empty area) deselects.
+        const next = pos != null && pos === bus.marked ? null : pos;
+        handle.pin(next);
+        bus.setMarked(next);
+        clickCb?.(next);
       },
       plugins: {
         legend: { labels: { boxWidth: 12, color: p.ink } },
