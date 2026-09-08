@@ -27,7 +27,7 @@ def search(term: str) -> list[dict]:
     if not term:
         return []
     params = {"query": term,
-              "fields": "accession,id,gene_names,organism_name,reviewed,xref_alphafolddb",
+              "fields": "accession,id,gene_names,organism_name,protein_name,reviewed,xref_alphafolddb",
               "format": "json", "size": "20"}
     data = None
     for attempt in (1, 2):
@@ -48,6 +48,8 @@ def search(term: str) -> list[dict]:
         out.append({
             "accession": r.get("primaryAccession", ""),
             "gene": gene,
+            "protein": (r.get("proteinDescription", {}).get("recommendedName", {})
+                         .get("fullName", {}).get("value", "")),
             "organism": r.get("organism", {}).get("scientificName", ""),
             "reviewed": str(r.get("entryType", "")).startswith("UniProtKB reviewed"),
             "hasAlphaFold": af,

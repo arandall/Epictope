@@ -7,6 +7,7 @@ export function renderResultsHeader(
   info: any,
   onSiteClick: (pos: number) => void,
   onChartPng: () => void,
+  onNewSearch: () => void,
 ): void {
   el.innerHTML = `
     <h2>${info.uniprot_id} — ${info.gene || ""}</h2>
@@ -18,6 +19,7 @@ export function renderResultsHeader(
     <div class="sites">${info.top_sites.map((s: any) =>
       `<button class="chip" data-pos="${s.position}">#${s.position} · min ${Number(s.min).toFixed(2)}</button>`).join("")}</div>
     <div class="downloads">
+      <button data-dl="new">New search</button>
       <button data-dl="csv">Score CSV</button>
       <button data-dl="msa">MSA (FASTA)</button>
       <button data-dl="png">Chart PNG</button>
@@ -32,5 +34,6 @@ export function renderResultsHeader(
   el.querySelector<HTMLElement>('[data-dl="csv"]')!.onclick = () => downloadScoreCsv(info.uniprot_id);
   el.querySelector<HTMLElement>('[data-dl="msa"]')!.onclick = () => downloadMsaFasta(info.uniprot_id);
   el.querySelector<HTMLElement>('[data-dl="png"]')!.onclick = onChartPng;
+  el.querySelector<HTMLElement>('[data-dl="new"]')!.onclick = onNewSearch;
   el.querySelector<HTMLElement>('[data-dl="print"]')!.onclick = printResults;
 }

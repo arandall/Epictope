@@ -8,10 +8,12 @@ const jobs: Record<string, { status: string }> = { "job-1": { status: "running" 
 // (this-typed methods), so the swappable mocks are typed loosely on purpose.
 let runMock: any = vi.fn(async () => ({ job_id: "job-1" }));
 let scoreMock: any = vi.fn(async () => { const e = new Error("404"); throw e; }); // default: not cached
+let resolveMock: any = vi.fn(async () => [{ input: "X", resolved: null, note: "no reviewed entry found" }]);
 vi.mock("../src/api", () => ({
   ApiError: class extends Error { constructor(public status: number, m: string) { super(m); } },
   runPrediction: (...a: any[]) => runMock(...a),
   fetchScore: (...a: any[]) => scoreMock(...a),
+  fetchResolve: (...a: any[]) => resolveMock(...a),
   fetchJob: vi.fn(async (id: string) => {
     // first poll: running; second poll: done
     const j = jobs[id];
@@ -29,6 +31,7 @@ describe("mountRunPanel", () => {
     jobs["job-1"] = { status: "running" };
     runMock = vi.fn(async () => ({ job_id: "job-1" }));
     scoreMock = vi.fn(async () => { throw new Error("404"); });
+    resolveMock = vi.fn(async () => [{ input: "X", resolved: null, note: "no reviewed entry found" }]);
   });
 
   it("renders the selected card with a collapsed advanced disclosure", () => {
@@ -81,6 +84,31 @@ describe("mountRunPanel", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(btn.disabled).toBe(false);
     expect(root.querySelector(".progress")!.textContent).toContain("still downloading");
+  });
+
+  it("offers the resolved reviewed accession when the hit has no AlphaFold model", async () => {
+    resolveMock = vi.fn(async () => [{ input: "A0A2R8QSE0", resolved: "Q5MD89", af_id: "Q5MD89",
+      note: "resolved to reviewed ortholog (gene=flt4)" }]);
+    const root = document.createElement("div");
+    const panel = mountRunPanel(root, vi.fn(), vi.fn());
+    panel.select({ ...hit, accession: "A0A2R8QSE0", hasAlphaFold: false });
+    await vi.advanceTimersByTimeAsync(0);
+    const use = root.querySelector<HTMLButtonElement>("button.useresolved");
+    expect(use?.textContent).toContain("Q5MD89");
+    expect(root.querySelector(".resolve-note")!.textContent).toContain("reviewed ortholog");
+    use!.click();
+    await vi.advanceTimersByTimeAsync(0); // re-select + cache probe settle
+    expect(root.querySelector(".selmain")!.textContent).toContain("Q5MD89");
+    expect(root.querySelector(".resolve-note")!.textContent).toContain("A0A2R8QSE0");
+  });
+
+  it("points at the custom-structure upload when nothing resolves", async () => {
+    const root = document.createElement("div");
+    const panel = mountRunPanel(root, vi.fn(), vi.fn());
+    panel.select({ ...hit, accession: "A0A0R4IFS9", hasAlphaFold: false });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(root.querySelector(".resolve-note")!.textContent).toContain("custom structure");
+    expect(root.querySelector<HTMLDetailsElement>("details.advanced")!.open).toBe(true);
   });
 
   it("clear() empties the panel", () => {

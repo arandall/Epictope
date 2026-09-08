@@ -15,12 +15,14 @@ def test_search_parses_json(monkeypatch):
         {"primaryAccession": "Q9W7E7", "genes": [{"geneName": {"value": "smad5"}}],
          "organism": {"scientificName": "Danio rerio"},
          "entryType": "UniProtKB reviewed",
+         "proteinDescription": {"recommendedName": {"fullName": {"value": "Mothers against decapentaplegic homolog 5"}}},
          "uniProtKBCrossReferences": [{"database": "AlphaFoldDB", "id": "Q9W7E7"}]}]}
     monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: FakeResp(fake))
     rows = uniprot.search("smad5")
     assert rows[0]["accession"] == "Q9W7E7"
     assert rows[0]["gene"] == "smad5"
     assert rows[0]["organism"] == "Danio rerio"
+    assert rows[0]["protein"] == "Mothers against decapentaplegic homolog 5"
     assert rows[0]["reviewed"] is True
     assert rows[0]["hasAlphaFold"] is True
 
