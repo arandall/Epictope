@@ -24,7 +24,7 @@
 # upstream-published x86-64 Linux binaries and no ARM builds are provided.
 
 # --- Frontend build ----------------------------------------------------------
-FROM node:20 AS frontend
+FROM node:24 AS frontend
 WORKDIR /src
 # package-lock.json was committed in Task 6; npm ci is reproducible.
 COPY webui/package.json webui/package-lock.json* ./
