@@ -1,0 +1,26 @@
+web/static/assets/index-CA2-sOGt.css
+  h_e49bc6578e470a 1
+web/static/assets/index-CQ2y1DVF.js
+  h_e49bc6578e470a 1,6,11,16,18,23,27-29,34-35,42,44,49,53-66,68-86
+web/static/index.html
+  h_e49bc6578e470a 7-8
+webui/src/chart.ts
+  h_e49bc6578e470a 93
+webui/src/main.ts
+  h_e49bc6578e470a 4,8-9,19,21,39,45,52-57,60,62,64-66,68,96
+webui/src/style.css
+  h_e49bc6578e470a 30-31,78-79,99,104-106,132-179
+webui/test/run.test.ts
+  h_e49bc6578e470a 25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "ea14a522f7bd6f3fa219241be46dfc4fcc7525d5",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
