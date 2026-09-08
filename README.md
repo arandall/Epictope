@@ -208,15 +208,22 @@ A growing FAQ can be found in our repository wiki [page](https://github.com/Frie
 
 ## Web application
 
-The repository also ships a web interface for running EpicTope without the command line. It is served by the same Docker image:
+The repository also ships a web interface for running EpicTope without the command line. Start it with the published image:
+
+```bash
+docker run --rm -d -p 8000:8000 -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
+  --name epictope-web "$GH_IMAGE"
+```
+
+Then open [http://localhost:8000](http://localhost:8000) in your browser. Watch the startup logs with `docker logs -f epictope-web` and stop it with `docker stop epictope-web`.
+
+### Local development
+
+If you are modifying the code, build and run the image from the repo instead of pulling it:
 
 ```bash
 docker compose up --build
 ```
-
-(This builds locally; use `docker compose pull && docker compose up` to run the published image instead.)
-
-Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
 1. Type a gene name, accession, or organism in the search box and pick the right
    UniProt entry from the autocomplete (badges show reviewed status and whether an
