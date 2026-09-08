@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi } from "vitest";
-import { colorForColumn, queryPositions, colorRuns, renderMsa } from "../src/msa";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { colorForColumn, queryPositions, colorRuns, renderMsa, baseName, rulerFor } from "../src/msa";
 import { bus } from "../src/sync";
 describe("colorForColumn", () => {
   it("red when all identical", () => expect(colorForColumn(["A","A","A"],0)).toBe("red"));
@@ -33,39 +33,129 @@ describe("colorRuns", () => {
   it("handles an all-identical row as a single run", () => {
     expect(colorRuns(["MMM", "MMM"], 1)).toEqual([{ color: "red", text: "MMM" }]);
   });
-  it("renderMsa prepends a ruler marking every 10 columns", () => {
-    document.body.innerHTML = "";
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const seq = "ACDEFGHIKLMNPQRSTVWY"; // 20 columns
-    renderMsa(el, { query: "Q", records: [{ id: "Q", seq }, { id: "H", seq }] });
-    const ruler = el.querySelector(".msaruler")!;
-    expect(ruler).not.toBeNull();
-    // labels right-aligned on their column: "10" ends at col 10, "20" at col 20
-    expect(ruler.textContent).toContain("10");
-    expect(ruler.textContent).toContain("20");
-    // tick line: "|" at every 10th column
-    const tick = ruler.textContent!.split("\n")[1];
+});
+
+describe("baseName", () => {
+  it("strips directory paths from record ids", () => {
+    expect(baseName("data/CDS/Bos_taurus.ARS-UCD1.2.pep.all.fa")).toBe("Bos_taurus.ARS-UCD1.2.pep.all.fa");
+    expect(baseName("Q5MD89")).toBe("Q5MD89");
+    expect(baseName("a\\b\\c.fa")).toBe("c.fa");
+  });
+});
+
+describe("rulerFor", () => {
+  it("labels multiples of 10 right-aligned on their absolute column", () => {
+    const r = rulerFor(0, 20);
+    const [label, tick] = r.split("\n");
     expect(tick[9]).toBe("|");
     expect(tick[19]).toBe("|");
     expect(tick[0]).toBe(" ");
+    expect(label.slice(8, 10)).toBe("10");  // "10" ends at column 10
+    expect(label.slice(18, 20)).toBe("20");
   });
-  it("maps strip-relative mouse x to the hovered column and clears on mouseleave", () => {
-    document.body.innerHTML = "";
+  it("uses absolute columns for later chunks", () => {
+    const [, tick] = rulerFor(190, 20).split("\n");
+    expect(tick[9]).toBe("|");               // column 200 is a tick
+    expect(rulerFor(190, 20).split("\n")[0].slice(7, 10)).toBe("200");
+  });
+});
+
+describe("renderMsa", () => {
+  beforeEach(() => { document.body.innerHTML = ""; });
+
+  function mountMsa(seqs: { id: string; seq: string }[], query: string, wrap?: number) {
     const el = document.createElement("div");
     document.body.appendChild(el);
-    const seq = "ACDEFGHIKL"; // 10 gapless query columns => qpos[c] = c + 1
-    renderMsa(el, { query: "Q", records: [{ id: "Q", seq }, { id: "M", seq: "MCDEFGHIKL" }, { id: "G", seq: "GCDEFGHIKL" }] });
-    const qRow = Array.from(el.querySelectorAll(".msarow")).find(r => r.querySelector(".msaname")?.textContent === "Q")!;
-    const strip = qRow.querySelector(".msastrip") as HTMLElement;
-    const rect = { left: 100, width: 500, top: 0, right: 600, bottom: 10, height: 10, x: 100, y: 0, toJSON: () => rect } as DOMRect;
-    vi.spyOn(strip, "getBoundingClientRect").mockReturnValue(rect);
+    const onPositionClick = vi.fn();
+    const handle = renderMsa(el, { query, records: seqs }, { wrap, onPositionClick });
+    return { el, handle, onPositionClick };
+  }
+
+  it("splits into chunks of `wrap` columns with one ruler and one row set per chunk", () => {
+    const seq = "A".repeat(45);
+    const { el } = mountMsa([{ id: "Q", seq }, { id: "H", seq }], "Q", 20);
+    const chunks = el.querySelectorAll(".msachunk");
+    expect(chunks).toHaveLength(3); // 20 + 20 + 5
+    expect(el.querySelectorAll(".msaruler")).toHaveLength(3);
+    // one letter = one position: every chunk row has one .cell per column
+    const firstBlockRows = chunks[0].querySelectorAll(".msablock .msarow");
+    const firstSeqRow = firstBlockRows[1]; // row 0 is the ruler
+    expect(firstSeqRow.querySelectorAll(".cell")).toHaveLength(20);
+    expect(chunks[2].querySelectorAll(".msarow")[1].querySelectorAll(".cell")).toHaveLength(5);
+    expect(chunks[0].querySelector(".chunkhead")!.textContent).toContain("1–20");
+  });
+
+  it("renders row labels as basenames and flags the query row", () => {
+    const { el } = mountMsa([
+      { id: "data/CDS/Bos_taurus.pep.all.fa", seq: "AAAA" },
+      { id: "Q5MD89", seq: "AAAA" },
+    ], "Q5MD89", 200);
+    const names = Array.from(el.querySelectorAll(".msaname")).map(n => n.textContent);
+    expect(names).toContain("Bos_taurus.pep.all.fa");
+    expect(names).toContain("Q5MD89");
+    expect(names.some(n => n?.includes("data/CDS"))).toBe(false);
+    expect(el.querySelector(".msaname.isquery")!.textContent).toBe("Q5MD89");
+  });
+
+  it("hovering a cell sets the active query residue and shows the tooltip at the mouse", () => {
+    const { el } = mountMsa([{ id: "Q", seq: "ACDEFGHIKL" }, { id: "M", seq: "MCDEFGHIKL" }], "Q");
     const setActive = vi.spyOn(bus, "setActive").mockImplementation(() => {});
-    // pointer at 50% of the strip => column 5 => residue 6 in a gapless query row
-    strip.dispatchEvent(new MouseEvent("mousemove", { clientX: 100 + 250 }));
-    expect(setActive).toHaveBeenCalledWith(6);
-    strip.dispatchEvent(new MouseEvent("mouseleave"));
+    const strip = el.querySelectorAll(".msarow")[1].querySelector(".msastrip")!;
+    const cell = strip.querySelectorAll<HTMLElement>(".cell")[5];
+    cell.dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 50, clientY: 60 }));
+    expect(setActive).toHaveBeenCalledWith(6); // gapless query: col 5 -> residue 6
+    const tip = el.querySelector<HTMLElement>(".msatip")!;
+    expect(tip.hidden).toBe(false);
+    expect(tip.style.left).toBe("62px"); // clientX + 12
+    strip.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+    expect(tip.hidden).toBe(true);
     expect(setActive).toHaveBeenLastCalledWith(null);
     vi.restoreAllMocks();
+  });
+
+  it("hovering a cell greys its whole contiguous colour run", () => {
+    // cols 0-1 red (all A), col 2 yellow (gap in Q), cols 3-4 blue — same
+    // fixture as the colorRuns test above.
+    const { el } = mountMsa([
+      { id: "Q", seq: "AA-AA" },
+      { id: "H", seq: "AACCB" },
+      { id: "G", seq: "AABCG" },
+    ], "Q");
+    const strip = el.querySelectorAll(".msarow")[1].querySelector(".msastrip")!;
+    const cells = strip.querySelectorAll<HTMLElement>(".cell");
+    cells[0].dispatchEvent(new MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    const ranged = Array.from(strip.querySelectorAll(".cell.inrange"));
+    expect(ranged.map(c => (c as HTMLElement).dataset.col)).toEqual(["0", "1"]);
+    strip.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+    expect(strip.querySelectorAll(".cell.inrange")).toHaveLength(0);
+  });
+
+  it("clicking a cell reports the query position via onPositionClick", () => {
+    const { el, onPositionClick } = mountMsa([{ id: "Q", seq: "A-CDEF" }, { id: "M", seq: "AACDEF" }], "Q");
+    const strip = el.querySelectorAll(".msarow")[1].querySelector(".msastrip")!;
+    strip.querySelectorAll<HTMLElement>(".cell")[2].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onPositionClick).toHaveBeenCalledWith(2); // col 2 in "A-CDEF" is residue 2
+    strip.querySelectorAll<HTMLElement>(".cell")[1].dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(onPositionClick).toHaveBeenCalledWith(null); // gap column
+  });
+
+  it("markPosition highlights the matching column in every chunk row and clears on null", () => {
+    const { el, handle } = mountMsa([{ id: "Q", seq: "ACDEF" }, { id: "M", seq: "ACDEF" }], "Q", 3);
+    handle.markPosition(2); // residue 2 -> column 1
+    expect(el.querySelectorAll(".cell.marked")).toHaveLength(2); // one per record row
+    expect(el.querySelector(".cell.marked")!.getAttribute("data-col")).toBe("1");
+    handle.markPosition(null);
+    expect(el.querySelectorAll(".cell.marked")).toHaveLength(0);
+  });
+
+  it("scrollToPosition scrolls the owning chunk into view", () => {
+    const scrollIntoView = vi.fn();
+    const orig = Element.prototype.scrollIntoView; // undefined in jsdom
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const seq = "A".repeat(50);
+    const { handle } = mountMsa([{ id: "Q", seq }, { id: "M", seq }], "Q", 20);
+    handle.scrollToPosition(45); // residue 45 -> column 44 -> chunk 2 (40-49)
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    Element.prototype.scrollIntoView = orig;
   });
 });

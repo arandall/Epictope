@@ -66,7 +66,7 @@ def result_msa(uniprot_id: str):
     p = config.OUTPUTS_DIR / uniprot_id / f"{uniprot_id}_msa.fasta"
     if not p.exists():
         raise HTTPException(status_code=404, detail="no MSA result for this ID")
-    return parsing.parse_msa(p)
+    return parsing.parse_msa(p, uniprot_id)
 
 @app.get("/api/results/{uniprot_id}/info")
 def result_info(uniprot_id: str):

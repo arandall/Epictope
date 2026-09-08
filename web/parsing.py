@@ -24,7 +24,7 @@ def parse_score_csv(path) -> list[dict]:
         return [{k: (_num(v) if k in NUMERIC_COLS else v) for k, v in r.items()}
                 for r in csv.DictReader(fh)]
 
-def parse_msa(path) -> dict:
+def parse_msa(path, query_id: str | None = None) -> dict:
     path = Path(path)
     records, current_id, seqs = [], None, []
     for line in path.read_text().splitlines():
@@ -37,7 +37,11 @@ def parse_msa(path) -> dict:
             seqs.append(line.strip())
     if current_id is not None:
         records.append({"id": current_id, "seq": "".join(seqs)})
-    return {"records": records, "query": records[0]["id"] if records else ""}
+    ids = {r["id"] for r in records}
+    # The query record is the bare accession; orthologs are file paths. Falling
+    # back to the first record keeps old cached files working.
+    query = query_id if query_id in ids else (records[0]["id"] if records else "")
+    return {"records": records, "query": query}
 
 def compute_top_sites(rows: list[dict], n: int = 5) -> list[dict]:
     mins = [float(r.get("min") or 0) for r in rows]

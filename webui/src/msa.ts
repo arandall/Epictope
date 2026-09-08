@@ -1,19 +1,24 @@
 import { bus } from "./sync";
-// Only the latest render's hover listener stays attached: re-registering on
-// every renderMsa call unsubscribes the previous closure (which referenced a
+// Only the latest render's bus listeners stay attached: re-registering on every
+// renderMsa call unsubscribes the previous closures (which referenced a
 // now-detached subtree).
-let unsub: (() => void) | null = null;
-export type CellColor = "red"|"blue"|"yellow";
+let unsubActive: (() => void) | null = null;
+let unsubMarked: (() => void) | null = null;
+
+export type CellColor = "red" | "blue" | "yellow";
 export function colorForColumn(seqs: string[], col: number): CellColor {
   const chars = seqs.map(s => s[col] ?? "-");
   if (chars.some(c => c === "-")) return "yellow";
   if (chars.every(c => c === chars[0])) return "red";
   return "blue";
 }
-// True query residue number per MSA column (counts non-gap chars in the query row),
-// so hover links to the chart by real residue position even when gaps exist.
-export function queryPositions(msa: { query: string; records: { id: string; seq: string }[] }): (number|null)[] {
-  const q = (msa.records.find(r => r.id === msa.query) ?? msa.records[0])?.seq ?? "";
+
+export interface MsaData { query: string; records: { id: string; seq: string }[] }
+
+// True query residue number per MSA column (counts non-gap chars in the query
+// row), so hover/click link to the chart by real residue position.
+export function queryPositions(msa: MsaData): (number | null)[] {
+  const q = querySeq(msa);
   let count = 0;
   return q.split("").map(ch => {
     if (ch === "-") return null;
@@ -22,11 +27,14 @@ export function queryPositions(msa: { query: string; records: { id: string; seq:
   });
 }
 
-export interface ColorRun { color: CellColor; text: string; }
+// The query row's gapped sequence (empty string when there are no records).
+export function querySeq(msa: MsaData): string {
+  return (msa.records.find(r => r.id === msa.query) ?? msa.records[0])?.seq ?? "";
+}
 
-// Run-length encode one alignment row: consecutive columns sharing a color
-// become a single run, so the DOM gets O(runs) nodes per row instead of
-// O(columns) — keeps large alignments snappy.
+export interface ColorRun { color: CellColor; text: string }
+
+// Run-length encode one alignment row (kept for callers/tests that want runs).
 export function colorRuns(seqs: string[], row: number): ColorRun[] {
   const seq = seqs[row] ?? "";
   const runs: ColorRun[] = [];
@@ -39,67 +47,176 @@ export function colorRuns(seqs: string[], row: number): ColorRun[] {
   return runs;
 }
 
-export function renderMsa(el: HTMLElement, msa: { query: string; records: { id: string; seq: string }[] }) {
+// "data/CDS/Bos_taurus.ARS-UCD1.2.pep.all.fa" -> "Bos_taurus.ARS-UCD1.2.pep.all.fa"
+export function baseName(id: string): string {
+  const parts = id.split(/[\\/]/);
+  return parts[parts.length - 1] || id;
+}
+
+// Two-line ruler for one chunk, EXACTLY `len` chars per line, using absolute
+// 1-based alignment columns: "|" ticks and right-aligned labels at multiples
+// of 10. Rendered in the same font/size as the sequence strips so columns line
+// up character-for-character (white-space: pre).
+export function rulerFor(startCol: number, len: number): string {
+  const tick = Array.from({ length: len }, (_, i) => ((startCol + i + 1) % 10 === 0 ? "|" : " "));
+  const label = Array.from({ length: len }, () => " ");
+  for (let c = Math.ceil((startCol + 1) / 10) * 10; c <= startCol + len; c += 10) {
+    const s = String(c);
+    const end = c - startCol - 1; // 0-based index of the label's last digit
+    for (let k = 0; k < s.length && end - s.length + 1 + k >= 0; k++) {
+      label[end - s.length + 1 + k] = s[k];
+    }
+  }
+  return `${label.join("")}\n${tick.join("")}`;
+}
+
+export interface MsaHandle {
+  scrollToPosition(pos: number): void;
+  markPosition(pos: number | null): void;
+}
+
+function clearRange(strip: HTMLElement): void {
+  strip.querySelectorAll(".cell.inrange").forEach(n => n.classList.remove("inrange"));
+}
+
+function onCellHover(e: MouseEvent, strip: HTMLElement, qpos: (number | null)[], tip: HTMLElement): void {
+  const t = (e.target as HTMLElement).closest<HTMLElement>(".cell");
+  if (!t || !strip.contains(t)) return;
+  const col = Number(t.dataset.col);
+  bus.setActive(qpos[col] ?? null);
+  clearRange(strip);
+  // Grey the whole contiguous same-colour run so grouped regions read as one
+  // range, while the single hovered letter keeps its own outline.
+  const color = ["red", "blue", "yellow"].find(c => t.classList.contains(c));
+  if (color) {
+    let a: Element = t;
+    let b: Element = t;
+    while (a.previousElementSibling?.classList.contains(color)) a = a.previousElementSibling;
+    while (b.nextElementSibling?.classList.contains(color)) b = b.nextElementSibling;
+    const start = Number((a as HTMLElement).dataset.col);
+    const end = Number((b as HTMLElement).dataset.col);
+    for (let n: Element | null = a; n; n = n.nextElementSibling) {
+      n.classList.add("inrange");
+      if (n === b) break;
+    }
+    tip.textContent = end > start
+      ? `Cols ${start + 1}–${end + 1} · query ${qpos[col] ?? "gap"}`
+      : `Col ${col + 1} · query ${qpos[col] ?? "gap"} · ${t.textContent}`;
+  }
+  tip.style.left = `${e.clientX + 12}px`;
+  tip.style.top = `${e.clientY + 14}px`;
+  tip.hidden = false;
+}
+
+export function renderMsa(
+  el: HTMLElement,
+  msa: MsaData,
+  opts: { wrap?: number; onPositionClick?: (pos: number | null) => void } = {},
+): MsaHandle {
+  const wrap = Math.max(1, opts.wrap ?? 200);
   const seqs = msa.records.map(r => r.seq);
   const qpos = queryPositions(msa);
+  const nCols = Math.max(...seqs.map(s => s.length), 0);
   el.innerHTML = "";
-  const head = document.createElement("div"); head.className = "msahead";
-  head.innerHTML = `<span class="legend"><i class="sw red"></i>conserved <i class="sw blue"></i>differs <i class="sw yellow"></i>gap</span>`;
+
+  const head = document.createElement("div");
+  head.className = "msahead";
+  head.innerHTML = `<span class="legend"><i class="sw red"></i>conserved <i class="sw blue"></i>differs <i class="sw yellow"></i>gap · one letter = one position · click a column to mark it</span>`;
   el.appendChild(head);
-  const viewport = document.createElement("div"); viewport.className = "msaviewport";
+  const viewport = document.createElement("div");
+  viewport.className = "msaviewport";
   el.appendChild(viewport);
-  // Ruler: monospace strip aligned with the columns below; "|" marks every
-  // 10th column and multiples of 10 are labeled (labels overflow harmlessly
-  // at the strip's end — it scrolls with the rows).
-  const nCols = Math.max(...msa.records.map(r => r.seq.length), 0);
-  if (nCols > 0) {
-    const tick = Array.from({ length: nCols }, (_, i) => ((i + 1) % 10 === 0 ? "|" : " ")).join("");
-    const label = Array.from({ length: nCols }, () => " ");
-    for (let c = 10; c <= nCols; c += 10) {
-      const s = String(c);
-      for (let k = 0; k < s.length && c - s.length + k >= 0; k++) label[c - s.length + k] = s[k];
-    }
-    const rrow = document.createElement("div"); rrow.className = "msarow";
-    const rname = document.createElement("span"); rname.className = "msaname";
-    rrow.appendChild(rname);
-    const ruler = document.createElement("span"); ruler.className = "msastrip msaruler";
-    ruler.textContent = `${label.join("")}\n${tick}`;
-    rrow.appendChild(ruler); viewport.appendChild(rrow);
+  const tip = document.createElement("div");
+  tip.className = "msatip";
+  tip.hidden = true;
+  el.appendChild(tip);
+
+  for (let start = 0; start < nCols; start += wrap) {
+    const len = Math.min(wrap, nCols - start);
+    const chunk = document.createElement("div");
+    chunk.className = "msachunk";
+    chunk.dataset.start = String(start);
+    const ch = document.createElement("div");
+    ch.className = "chunkhead";
+    ch.textContent = `Columns ${start + 1}–${start + len}`;
+    chunk.appendChild(ch);
+    const block = document.createElement("div");
+    block.className = "msablock";
+    chunk.appendChild(block);
+
+    // Ruler row: same .msastrip font as sequence rows so it aligns exactly.
+    const rrow = document.createElement("div");
+    rrow.className = "msarow";
+    const rsp = document.createElement("span");
+    rsp.className = "msaname";
+    rrow.appendChild(rsp);
+    const ruler = document.createElement("span");
+    ruler.className = "msastrip msaruler";
+    ruler.textContent = rulerFor(start, len);
+    rrow.appendChild(ruler);
+    block.appendChild(rrow);
+
+    msa.records.forEach((rec, rowIdx) => {
+      const row = document.createElement("div");
+      row.className = "msarow";
+      const name = document.createElement("span");
+      name.className = "msaname";
+      name.textContent = baseName(rec.id);
+      name.title = rec.id; // full path on hover
+      if (rec.id === msa.query) name.classList.add("isquery");
+      row.appendChild(name);
+      const strip = document.createElement("span");
+      strip.className = "msastrip";
+      for (let c = start; c < start + len; c++) {
+        const s = document.createElement("span");
+        s.className = `cell ${colorForColumn(seqs, c)}`;
+        s.dataset.col = String(c);
+        s.textContent = rec.seq[c] ?? "-";
+        strip.appendChild(s);
+      }
+      strip.addEventListener("mousemove", (e) => onCellHover(e, strip, qpos, tip));
+      strip.addEventListener("mouseleave", () => { clearRange(strip); tip.hidden = true; bus.setActive(null); });
+      strip.addEventListener("click", (e) => {
+        const t = (e.target as HTMLElement).closest<HTMLElement>(".cell");
+        if (t && strip.contains(t)) opts.onPositionClick?.(qpos[Number(t.dataset.col)] ?? null);
+      });
+      row.appendChild(strip);
+      block.appendChild(row);
+    });
+    viewport.appendChild(chunk);
   }
-  msa.records.forEach((rec, rowIdx) => {
-    const row = document.createElement("div"); row.className = "msarow";
-    const name = document.createElement("span"); name.className = "msaname"; name.textContent = rec.id;
-    row.appendChild(name);
-    const strip = document.createElement("span"); strip.className = "msastrip";
-    let col = 0;
-    for (const run of colorRuns(seqs, rowIdx)) {
-      const s = document.createElement("span");
-      s.className = `cell ${run.color}`;
-      s.dataset.start = String(col);
-      s.dataset.end = String(col + run.text.length - 1);
-      s.textContent = run.text;
-      strip.appendChild(s);
-      col += run.text.length;
-    }
-    // Delegated hover: column from pointer x relative to the strip (clientX - rect.left;
-    // offsetX would be relative to the innermost .cell target, not the strip).
-    strip.addEventListener("mousemove", (e) => {
-      const rect = strip.getBoundingClientRect();
-      const len = rec.seq.length;
-      if (rect.width <= 0 || len === 0) return;
-      const x = e.clientX - rect.left;
-      const c = Math.min(len - 1, Math.max(0, Math.floor((x / rect.width) * len)));
-      bus.setActive(qpos[c]);
-    });
-    strip.addEventListener("mouseleave", () => bus.setActive(null));
-    row.appendChild(strip); viewport.appendChild(row);
-  });
-  unsub?.();
-  unsub = bus.onActive(pos => {
+
+  const colCells = (col: number) => el.querySelectorAll<HTMLElement>(`.cell[data-col="${col}"]`);
+  const handle: MsaHandle = {
+    scrollToPosition(pos) {
+      const col = qpos.indexOf(pos);
+      if (col < 0) return;
+      const chunkEl = viewport.querySelectorAll<HTMLElement>(".msachunk")[Math.floor(col / wrap)];
+      chunkEl?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      const block = chunkEl?.querySelector<HTMLElement>(".msablock");
+      const cell = chunkEl?.querySelector<HTMLElement>(`.cell[data-col="${col}"]`);
+      if (block && cell) {
+        // rect math works regardless of CSS offsetParent chains
+        const d = cell.getBoundingClientRect().left - block.getBoundingClientRect().left;
+        block.scrollLeft += d - (block.clientWidth - cell.getBoundingClientRect().width) / 2;
+      }
+    },
+    markPosition(pos) {
+      el.querySelectorAll(".cell.marked").forEach(n => n.classList.remove("marked"));
+      if (pos == null) return;
+      const col = qpos.indexOf(pos);
+      if (col >= 0) colCells(col).forEach(n => n.classList.add("marked"));
+    },
+  };
+
+  unsubActive?.();
+  unsubMarked?.();
+  unsubActive = bus.onActive(pos => {
+    const col = pos == null ? -1 : qpos.indexOf(pos);
     el.querySelectorAll<HTMLElement>(".cell").forEach(n => {
-      const start = Number(n.dataset.start), end = Number(n.dataset.end);
-      const qIdx = pos == null ? -1 : qpos.indexOf(pos);
-      n.classList.toggle("active", qIdx >= 0 && qIdx >= start && qIdx <= end);
+      n.classList.toggle("active", col >= 0 && Number(n.dataset.col) === col);
     });
   });
+  unsubMarked = bus.onMarked(pos => handle.markPosition(pos));
+  return handle;
 }

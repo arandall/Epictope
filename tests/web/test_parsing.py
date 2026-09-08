@@ -29,6 +29,16 @@ def test_parse_msa(tmp_path):
     assert msa["records"][0]["seq"] == "ACGT"
     assert msa["query"] == "Q9W7E7"
 
+def test_parse_msa_picks_query_by_id_not_position(tmp_path):
+    # Real MSA files list ortholog paths first; the query is the bare accession.
+    p = tmp_path / "Q5MD89_msa.fasta"
+    p.write_text(">data/CDS/Bos_taurus.pep.all.fa\nACGT\n>Q5MD89\nAC-T\n")
+    msa = parsing.parse_msa(p, "Q5MD89")
+    assert msa["query"] == "Q5MD89"
+    # unknown query id falls back to the first record
+    msa2 = parsing.parse_msa(p, "ZZZZZ")
+    assert msa2["query"] == "data/CDS/Bos_taurus.pep.all.fa"
+
 def test_meta_roundtrip(tmp_path, monkeypatch):
     import web.config as cfg
     monkeypatch.setattr(cfg, "OUTPUTS_DIR", tmp_path)
