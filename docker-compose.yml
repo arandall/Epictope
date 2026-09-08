@@ -1,0 +1,12 @@
+services:
+  epictope:
+    build: .
+    image: epictope
+    # Keep downloaded proteome/CDS data and results on the host.
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+    # Default: drop into an R shell. Override the command to run a script, e.g.:
+    #   docker compose run --rm epictope Rscript scripts/single_score.R Q9W7E7
+    stdin_open: true
+    tty: true

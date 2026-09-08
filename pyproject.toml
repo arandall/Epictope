@@ -1,0 +1,17 @@
+[project]
+name = "epictope"
+version = "0.0.1"
+description = "Python helper scripts for EpicTope (epitope tag insertion site prediction)."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "biopython<1.83",
+    "pandas",
+    "requests",
+    "beautifulsoup4",
+    "pyyaml",
+    "selenium",
+]
+
+[tool.uv]
+package = false
