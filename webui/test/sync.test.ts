@@ -9,4 +9,13 @@ describe("sync bus", () => {
     bus.setActive(null);
     expect(got).toBeNull();
   });
+  it("notifies marked listeners on setMarked", () => {
+    let got: number | null = -1;
+    const off = bus.onMarked(p => { got = p; });
+    bus.setMarked(7);
+    expect(got).toBe(7);
+    bus.setMarked(null);
+    expect(got).toBeNull();
+    off();
+  });
 });
