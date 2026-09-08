@@ -1,11 +1,12 @@
 import { fetchScore, fetchInfo, fetchMsa, fetchStatus } from "./api";
 import { renderMinChart, topSites, type MinChartHandle } from "./chart";
 import { renderSequence } from "./sequence";
-import { renderMsa } from "./msa";
+import { renderMsa, type MsaHandle } from "./msa";
 import { renderResultsHeader } from "./info";
 import { mountSearch, type SearchHit } from "./search";
 import { mountRunPanel } from "./run";
-import { parseUrl, setUrl, onUrlChange } from "./state";
+import { parseUrl, setUrl, onUrlChange, parseChunk } from "./state";
+import { pushRecent } from "./recent";
 import { bus } from "./sync";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -15,7 +16,9 @@ const $ = (id: string) => document.getElementById(id)!;
 const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 let chartHandle: MinChartHandle | null = null;
+let msaHandle: MsaHandle | null = null;
 let busUnsub: (() => void) | null = null;
+let markUnsub: (() => void) | null = null;
 
 function showSkeletons() {
   $("results").hidden = false;
@@ -33,26 +36,36 @@ async function showResults(acc: string) {
     const [rows, info, msa] = await Promise.all([fetchScore(acc), fetchInfo(acc), fetchMsa(acc)]);
     $("results").hidden = false;
     $("searchZone").classList.add("compact");
+    const wrap = parseChunk();
     if (chartHandle) { chartHandle.chart.destroy(); chartHandle = null; }
     $("chartCard").innerHTML = `<p class="overline">Tagging score</p>
       <div class="chartwrap"><canvas id="chart"></canvas></div>`;
     chartHandle = renderMinChart($("chart") as HTMLCanvasElement, rows, topSites(rows));
     renderResultsHeader($("reshead"), info,
-      (pos) => chartHandle!.pin(pos),
+      (pos) => { bus.setMarked(pos); msaHandle?.scrollToPosition(pos); },
       () => {
         if (!chartHandle) return;
         const a = document.createElement("a");
         a.href = chartHandle.exportPng();
         a.download = `${acc}_min_score.png`;
         document.body.appendChild(a); a.click(); a.remove();
+      },
+      () => {
+        // "New search": bring the (compacted) search box back into focus.
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        const inp = document.querySelector<HTMLInputElement>("#search input");
+        inp?.focus(); inp?.select();
       });
     $("seqCard").innerHTML = `<p class="overline">Query sequence</p><div id="sequence"></div>`;
-    renderSequence($("sequence"), rows);
+    renderSequence($("sequence"), rows, { msa, wrap, onPositionClick: (pos) => bus.setMarked(pos) });
     $("msaCard").innerHTML = `<p class="overline">Multiple sequence alignment</p><div id="msa"></div>`;
-    renderMsa($("msa"), msa);
+    msaHandle = renderMsa($("msa"), msa, { wrap, onPositionClick: (pos) => bus.setMarked(pos) });
     chartHandle.setHoverCallback((pos) => bus.setActive(pos));
-    busUnsub?.(); busUnsub = bus.onActive((pos) => chartHandle?.highlight(pos));
+    busUnsub?.(); markUnsub?.();
+    busUnsub = bus.onActive((pos) => chartHandle?.highlight(pos));
+    markUnsub = bus.onMarked((pos) => chartHandle?.pin(pos));
   } catch (e) {
+    msaHandle = null;
     // fetchScore/fetchInfo/fetchMsa reject with ApiError (e.g. stale ?id= deep link).
     $("results").hidden = true;
     $("searchZone").classList.remove("compact");
@@ -80,6 +93,7 @@ const runPanel = mountRunPanel($("runPanel"), (acc) => { setUrl(acc); showResult
 
 mountSearch($("search"), (hit: SearchHit) => {
   $("errorBox").innerHTML = "";
+  pushRecent({ q: hit.accession }); // selections count as recent searches too
   setUrl(hit.accession);
   runPanel.select(hit);
 });

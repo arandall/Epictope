@@ -22,7 +22,7 @@ vi.mock("../src/api", () => ({
   }),
 }));
 
-const hit = { accession: "Q9W7E7", gene: "smad5", organism: "Danio rerio", reviewed: true, hasAlphaFold: true };
+const hit = { accession: "Q9W7E7", gene: "smad5", organism: "Danio rerio", protein: "", reviewed: true, hasAlphaFold: true };
 
 describe("mountRunPanel", () => {
   beforeEach(() => {

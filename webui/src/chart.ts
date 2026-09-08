@@ -90,7 +90,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       plugins: {
         legend: { labels: { boxWidth: 12 } },
         tooltip: {
-          filter: (it) => !(chart.data.datasets[it.datasetIndex] as any).hidden,
+          filter: (it: any): boolean => !(chart.data.datasets[it.datasetIndex] as any).hidden,
           callbacks: {
             // items can be empty when every active element was filtered out
             // (e.g. cross-view highlight pinning) — tolerate that.
