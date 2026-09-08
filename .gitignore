@@ -4,3 +4,5 @@ ignore/
 .Rprofile
 tools/
 .venv/
+__pycache__/
+node_modules/

@@ -1,25 +1,38 @@
-# EpicTope container image
+# EpicTope web-app container image (multi-stage).
 #
-# Builds a self-contained environment to run the EpicTope R pipeline:
-#   - R (with TIFF, PNG, cairo device support)
-#   - The local `epictope` R package (installed from this repo)
-#   - CRAN/Bioconductor dependencies (rvest, httr, jsonlite, R.utils, Biostrings)
-#   - Binary tools on PATH: BLAST+ (blastp/makeblastdb/blastdbcmd), MUSCLE, mkdssp
-#   - libCIF++ components.cif data for mkdssp
+# Stage 1 (frontend): build the Vite/TypeScript UI with node.
+#   vite.config.ts sets build.outDir = "../web/static"; with WORKDIR /src the
+#   webui/ tree lives at /src, so the build output lands at /web/static
+#   (NOT /src/dist) — the final stage copies it from there.
+#
+# Stage 2 (runtime): rocker/r-ver with the R toolchain, BLAST+/MUSCLE/DSSP
+#   binaries, and the FastAPI backend; the local `epictope` R package is
+#   installed from the copied repo. At startup docker-entrypoint.sh runs
+#   scripts/install.R in the background (populating the mounted data/ volume)
+#   and serves the app on :8000.
 #
 # Build:
 #   docker build -t epictope .
-#
-# Run the pipeline (interactive R shell):
-#   docker run --rm -it -v "$PWD/outputs:/app/outputs" -v "$PWD/data:/app/data" epictope
-#
-# Run a script directly:
-#   docker run --rm -v "$PWD/outputs:/app/outputs" \
-#     epictope Rscript scripts/single_score.R Q9W7E7
+# Run:
+#   docker run --rm -d -p 8000:8000 -v "$PWD/data:/app/data" \
+#     -v "$PWD/outputs:/app/outputs" epictope
 #
 # Persist downloaded CDS/proteome data by mounting ./data; persist results by
-# mounting ./outputs. The pipeline writes relative to /app (the repo root).
+# mounting ./outputs.
+#
+# The image is linux/amd64 only: BLAST+, MUSCLE, and mkdssp are installed from
+# upstream-published x86-64 Linux binaries and no ARM builds are provided.
 
+# --- Frontend build ----------------------------------------------------------
+FROM node:20 AS frontend
+WORKDIR /src
+# package-lock.json was committed in Task 6; npm ci is reproducible.
+COPY webui/package.json webui/package-lock.json* ./
+RUN npm ci
+COPY webui/ ./
+RUN npm run build
+
+# --- R base (existing toolchain) --------------------------------------------
 FROM rocker/r-ver:4
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -29,8 +42,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LIBCIFPP_DATA_DIR=/opt/libcifpp \
     PATH="/opt/blast/bin:${PATH}"
 
-# System libraries: R device support (tiff/png/cairo) and tools for the
-# CRAN/Bioconductor packages we install below.
+# System libraries: R device support (tiff/png/cairo), tools for the
+# CRAN/Bioconductor packages below, and python3/pip for the FastAPI backend.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libtiff-dev \
         libcairo2-dev \
@@ -44,6 +57,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         wget \
         bzip2 \
         gzip \
+        python3 \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # R package dependencies.
@@ -71,6 +86,11 @@ RUN curl -L "https://github.com/PDB-REDO/dssp/releases/download/v${DSSP_VER}/mkd
     && curl -L "https://files.wwpdb.org/pub/pdb/data/monomers/components.cif" \
        -o /opt/libcifpp/components.cif
 
+# Python backend deps. PEP 668: the rocker/r-ver base (Ubuntu >= 24.04) marks
+# the system Python externally-managed, so pip needs --break-system-packages.
+# python-multipart is required for the /api/run Form/File parameters.
+RUN pip3 install --no-cache-dir --break-system-packages fastapi "uvicorn[standard]" httpx python-multipart
+
 WORKDIR /app
 
 # Copy the repo (source only; data/, outputs/, tools/ are gitignored and
@@ -78,4 +98,10 @@ WORKDIR /app
 COPY . /app
 RUN R CMD INSTALL .
 
-CMD ["R"]
+# Static UI from the frontend stage (see note at the top of this file).
+COPY --from=frontend /web/static /app/web/static
+
+RUN chmod +x /app/docker-entrypoint.sh
+
+EXPOSE 8000
+CMD ["/app/docker-entrypoint.sh"]

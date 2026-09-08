@@ -13,6 +13,7 @@ This repository contains the code source of the R EpicTope package, step-by-step
 - [Installation](#installation)
 - [Usage](#usage)
 - [Examples](#examples)
+- [Web application](#web-application)
 
 ## Methodology
 
@@ -55,9 +56,31 @@ system package manager setup is required.
 > The pipeline needs network access at runtime to download proteome/CDS data
 > (`scripts/install.R`), UniProt/AlphaFold entries, and IUPred2A predictions.
 
-### Build the image
+### Get the image
 
-From the project root:
+A prebuilt image is published to GitHub Container Registry on every push to the
+default branch. Pull it:
+
+```bash
+docker pull ghcr.io/arandall/epictope:latest
+```
+
+> The image is **x86-64 (amd64) only**. The binary tools bundled in the image
+> (**BLAST+**, **MUSCLE**, **mkdssp/DSSP**) are published upstream as x86-64
+> Linux executables only, so there is no ARM build. This covers x86-64 Linux
+> and Windows (via Docker Desktop/WSL 2) natively, Intel Macs natively, and
+> Apple Silicon Macs through Rosetta 2 emulation — in Docker Desktop enable
+> "Use Rosetta for x86_64/amd64 emulation on Apple silicon" (on by default in
+> recent versions). Emulated runs work but are noticeably slower.
+
+All examples below use this image; set an alias to keep the commands short:
+
+```bash
+GH_IMAGE=ghcr.io/arandall/epictope:latest
+```
+
+To build the image yourself instead (e.g. after modifying the code), from the
+project root:
 
 ```bash
 docker build -t epictope .
@@ -73,11 +96,11 @@ persist on the host:
 
 ```bash
 # Interactive R shell
-docker run --rm -it -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" epictope
+docker run --rm -it -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" "$GH_IMAGE"
 
 # Run a script directly
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/single_score.R Q9W7E7
+  "$GH_IMAGE" Rscript scripts/single_score.R Q9W7E7
 ```
 
 With `docker compose` the volumes are preconfigured, so you can simply run a
@@ -99,9 +122,9 @@ Run the EpicTope workflow. With Docker (mounting `data` and `outputs`):
 
 ```bash
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/install.R
+  "$GH_IMAGE" Rscript scripts/install.R
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/single_score.R Q9W7E7
+  "$GH_IMAGE" Rscript scripts/single_score.R Q9W7E7
 ```
 
 ### Example 1C: Generating EpicTope predictions for custom AlphaFold structures
@@ -110,7 +133,7 @@ Some UniProt entries do not have a corresponding AlphaFold prediction yet. To us
 
 ```bash
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif
+  "$GH_IMAGE" Rscript scripts/single_score.R Q9W7E7 data/models/custom_model_of_Q9W7E7.cif
 ```
 
 Sometimes, the user-supplied structure file may contain only one portion of the complete protein, for example, when the AlphaFold Server limits the user-supplied sequence. In this case, the first residue of the custom structure can be supplied as an additional argument (the N-terminal residue of the protein is residue 1). For example, if the custom structure starts at residue 57 of the protein:
@@ -128,7 +151,7 @@ For convenience, we provide a `scripts/plot_scores.R` script that generates a pl
 
 ```bash
 docker run --rm -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/plot_scores.R outputs/Q9W7E7_score.csv
+  "$GH_IMAGE" Rscript scripts/plot_scores.R outputs/Q9W7E7_score.csv
 ```
 
 The output image is written next to the input CSV as `<input>_score.tiff` (e.g. `outputs/Q9W7E7_score.tiff`).
@@ -164,9 +187,9 @@ Run them inside the container (see [Installation](#installation)):
 
 ```bash
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/install.R
+  "$GH_IMAGE" Rscript scripts/install.R
 docker run --rm -v "$PWD/data:/app/data" -v "$PWD/outputs:/app/outputs" \
-  epictope Rscript scripts/single_score.R "P57102"  # replace with your UniProt ID
+  "$GH_IMAGE" Rscript scripts/single_score.R "P57102"  # replace with your UniProt ID
 ```
 
 Each script can also be opened in an IDE such as RStudio, and run interactively line by line (with the `epictope` package and BLAST/MUSCLE/mkdssp available on the PATH).
@@ -182,6 +205,33 @@ EpicTope searches for a "config.R" file in the working directory. If it doesn't 
 ### Frequently Asked Questions
 
 A growing FAQ can be found in our repository wiki [page](https://github.com/FriedbergLab/EpicTope/wiki/F.A.Q).
+
+## Web application
+
+The repository also ships a web interface for running EpicTope without the command line. It is served by the same Docker image:
+
+```bash
+docker compose up --build
+```
+
+(This builds locally; use `docker compose pull && docker compose up` to run the published image instead.)
+
+Then open [http://localhost:8000](http://localhost:8000) in your browser.
+
+1. Type a gene name, accession, or organism in the search box and pick the right
+   UniProt entry from the autocomplete (badges show reviewed status and whether an
+   AlphaFold model exists).
+2. Click **Run prediction**. If the protein has no AlphaFold model, expand
+   **Advanced options** first to upload a custom `.cif` structure and set the
+   N-terminal residue, as described in [example 1C](#example-1c-generating-epictope-predictions-for-custom-alphafold-structures).
+3. When the run finishes, the page shows the tagging-score chart (minimum feature
+   score per position, with a window-7 smoothed overlay and marked top sites), the
+   multiple sequence alignment in a scrollable panel, and download buttons for the
+   score CSV, the MSA FASTA, a chart PNG, and a print/PDF report.
+
+Results are cached on disk under `outputs/<UniProtID>/` (e.g. `outputs/Q9W7E7/`), so reloading the page or re-running the same protein reuses the stored results instead of recomputing them.
+
+> The first boot downloads the reference data (the proteomes used by the multiple sequence alignment) in the background before predictions can start — the same `scripts/install.R` step described above. Progress is shown in the interface, and the download only happens once per `data` volume.
 
 ## License 
 

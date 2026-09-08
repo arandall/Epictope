@@ -1,4 +1,6 @@
 # Don't bake local build artifacts or git metadata into the image.
+# data, outputs, .git remain excluded (persisted via volumes); web/ and webui/
+# are included so the image builds.
 .git
 .kilo
 .venv
@@ -11,3 +13,6 @@ Rplots.pdf
 *.log
 .python-version
 uv.lock
+node_modules
+webui/node_modules
+__pycache__
