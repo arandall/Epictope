@@ -19,6 +19,9 @@
 #
 # Persist downloaded CDS/proteome data by mounting ./data; persist results by
 # mounting ./outputs.
+#
+# The image is linux/amd64 only: BLAST+, MUSCLE, and mkdssp are installed from
+# upstream-published x86-64 Linux binaries and no ARM builds are provided.
 
 # --- Frontend build ----------------------------------------------------------
 FROM node:20 AS frontend

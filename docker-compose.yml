@@ -1,7 +1,7 @@
 services:
   epictope:
     build: .
-    image: epictope
+    image: ghcr.io/arandall/epictope:latest
     ports:
       - "8000:8000"
     volumes:
