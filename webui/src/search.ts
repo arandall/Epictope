@@ -55,8 +55,10 @@ export async function runQuery(q: string): Promise<SearchHit[]> {
 export function mountSearch(root: HTMLElement, onSelect: (hit: SearchHit) => void): void {
   root.innerHTML = `
     <div class="searchbox">
-      <input type="search" placeholder="Gene, accession, or organism — e.g. smad5 or Q9W7E7"
-             aria-label="Search UniProt" autocomplete="off" spellcheck="false"/>
+      <div class="searchrow">
+        <input type="search" placeholder="Gene, accession, or organism — e.g. smad5 or Q9W7E7"
+               aria-label="Search UniProt" autocomplete="off" spellcheck="false"/>
+      </div>
       <button class="primary searchbtn" type="button">Search</button>
     </div>
     <div class="recent" hidden></div>`;
@@ -99,7 +101,7 @@ export function mountSearch(root: HTMLElement, onSelect: (hit: SearchHit) => voi
         ul.appendChild(li);
       });
     }
-    root.querySelector(".searchbox")!.appendChild(ul);
+    root.querySelector(".searchrow")!.appendChild(ul);
   };
 
   const renderRecent = () => {

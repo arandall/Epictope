@@ -56,18 +56,49 @@ export function baseName(id: string): string {
 // Two-line ruler for one chunk, EXACTLY `len` chars per line, using absolute
 // 1-based alignment columns: "|" ticks and right-aligned labels at multiples
 // of 10. Rendered in the same font/size as the sequence strips so columns line
-// up character-for-character (white-space: pre).
-export function rulerFor(startCol: number, len: number): string {
-  const tick = Array.from({ length: len }, (_, i) => ((startCol + i + 1) % 10 === 0 ? "|" : " "));
+// up character-for-character (white-space: pre). With `markCol` (0-based
+// absolute column), the tick at that column becomes a "▼" arrow and its
+// absolute column number is placed right-aligned above it (overwriting any
+// multiple-of-10 label there) so the clicked column is easy to spot.
+export function rulerFor(startCol: number, len: number, markCol?: number): string {
+  const tick: string[] = Array.from({ length: len }, (_, i) => ((startCol + i + 1) % 10 === 0 ? "|" : " "));
   const label = Array.from({ length: len }, () => " ");
-  for (let c = Math.ceil((startCol + 1) / 10) * 10; c <= startCol + len; c += 10) {
-    const s = String(c);
-    const end = c - startCol - 1; // 0-based index of the label's last digit
+  // Right-aligns String(value) so its last digit lands on index `end`.
+  const placeLabel = (end: number, value: number) => {
+    const s = String(value);
     for (let k = 0; k < s.length && end - s.length + 1 + k >= 0; k++) {
       label[end - s.length + 1 + k] = s[k];
     }
+  };
+  for (let c = Math.ceil((startCol + 1) / 10) * 10; c <= startCol + len; c += 10) {
+    placeLabel(c - startCol - 1, c);
+  }
+  if (markCol != null && markCol >= startCol && markCol < startCol + len) {
+    tick[markCol - startCol] = "▼";
+    placeLabel(markCol - startCol, markCol + 1);
   }
   return `${label.join("")}\n${tick.join("")}`;
+}
+
+// Render a chunk's ruler. Unmarked chunks are plain text; the chunk owning
+// the marked column wraps the column number and the "▼" arrow in .rulermark
+// spans so ONLY those glyphs get the highlight colour — the ruler row itself
+// must not light up. textContent always equals rulerFor(start, len, markCol),
+// so the two-line layout and column alignment are preserved. (Content is
+// provably [0-9 |▼], so innerHTML interpolation is safe.)
+function renderRuler(el: HTMLElement, startCol: number, len: number, markCol?: number): void {
+  if (markCol == null || markCol < startCol || markCol >= startCol + len) {
+    el.textContent = rulerFor(startCol, len);
+    return;
+  }
+  const [label, tick] = rulerFor(startCol, len, markCol).split("\n");
+  const i = markCol - startCol;
+  const num = String(markCol + 1);
+  const j = i - num.length + 1; // the number is right-aligned ending at i
+  el.innerHTML =
+    `${label.slice(0, j)}<span class="rulermark">${label.slice(j, i + 1)}</span>${label.slice(i + 1)}` +
+    `\n` +
+    `${tick.slice(0, i)}<span class="rulermark arr">${tick[i]}</span>${tick.slice(i + 1)}`;
 }
 
 export interface MsaHandle {
@@ -136,6 +167,7 @@ export function renderMsa(
     const chunk = document.createElement("div");
     chunk.className = "msachunk";
     chunk.dataset.start = String(start);
+    chunk.dataset.len = String(len);
     const ch = document.createElement("div");
     ch.className = "chunkhead";
     ch.textContent = `Columns ${start + 1}–${start + len}`;
@@ -159,6 +191,7 @@ export function renderMsa(
     msa.records.forEach((rec, rowIdx) => {
       const row = document.createElement("div");
       row.className = "msarow";
+      if (rec.id === msa.query) row.classList.add("queryrow");
       const name = document.createElement("span");
       name.className = "msaname";
       name.textContent = baseName(rec.id);
@@ -184,6 +217,12 @@ export function renderMsa(
       block.appendChild(row);
     });
     viewport.appendChild(chunk);
+
+    // Lift the query row out of the ortholog list and pin it directly under
+    // the ruler in every chunk — the query sequence and the alignment share
+    // the same wrapped view and stay visually paired at any scroll offset.
+    const qrow = block.querySelector<HTMLElement>(".msarow.queryrow");
+    if (qrow) block.insertBefore(qrow, rrow.nextSibling);
   }
 
   const colCells = (col: number) => el.querySelectorAll<HTMLElement>(`.cell[data-col="${col}"]`);
@@ -203,8 +242,16 @@ export function renderMsa(
     },
     markPosition(pos) {
       el.querySelectorAll(".cell.marked").forEach(n => n.classList.remove("marked"));
-      if (pos == null) return;
-      const col = qpos.indexOf(pos);
+      const col = pos == null ? -1 : qpos.indexOf(pos);
+      // Redraw every ruler: the chunk owning the marked column gets the "▼"
+      // arrow + column number, the rest go back to plain — this also handles
+      // unmarking (pos == null).
+      viewport.querySelectorAll<HTMLElement>(".msachunk").forEach(chunk => {
+        const start = Number(chunk.dataset.start);
+        const len = Number(chunk.dataset.len);
+        renderRuler(chunk.querySelector(".msaruler")!, start, len,
+          col >= start && col < start + len ? col : undefined);
+      });
       if (col >= 0) colCells(col).forEach(n => n.classList.add("marked"));
     },
   };

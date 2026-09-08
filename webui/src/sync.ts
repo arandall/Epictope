@@ -1,6 +1,6 @@
 type Listener = (pos: number | null) => void;
 // Two channels: `active` = transient hover highlight, `marked` = persistent
-// click marker shown across chart, query sequence and MSA.
+// click marker shown across chart and MSA.
 class Bus {
   active: number | null = null;
   marked: number | null = null;

@@ -37,6 +37,7 @@ export function movingAverage(rows: any[], key: string, window = 7): number[] {
 }
 
 let hoverCb: ((pos: number | null) => void) | null = null;
+let clickCb: ((pos: number | null) => void) | null = null;
 
 // The emphasized raw `min` dataset; highlight() pins tooltips to it.
 export const MIN_DATASET_INDEX = 0;
@@ -44,6 +45,7 @@ export const MIN_DATASET_INDEX = 0;
 export interface MinChartHandle {
   chart: Chart;
   setHoverCallback(cb: (pos: number | null) => void): void;
+  setClickCallback(cb: (pos: number | null) => void): void;
   highlight(pos: number | null): void;
   pin(pos: number | null): void;
   exportPng(): string;
@@ -59,12 +61,37 @@ function siteAnnotation(s: TopSite) {
   };
 }
 
+// Full-height vertical guide drawn at the hovered position (canvas overlay, so
+// it works even though the raw dataset is hidden) — much easier to track than
+// the tooltip alone. Redrawn by the "hoverline" plugin after every update.
+let hoverPos: number | null = null;
+const hoverLinePlugin = {
+  id: "hoverline",
+  afterDatasetsDraw(c: Chart) {
+    if (hoverPos == null) return;
+    const x = c.scales.x?.getPixelForValue(hoverPos);
+    const area = c.chartArea;
+    if (x == null || !area || x < area.left || x > area.right) return;
+    const ctx = c.ctx;
+    ctx.save();
+    ctx.strokeStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(x, area.top);
+    ctx.lineTo(x, area.bottom);
+    ctx.stroke();
+    ctx.restore();
+  },
+};
+
 // Paper-faithful chart (Fig 2C / plot_scores.R): raw `min` filled area +
 // dashed window-7 smoothed overlay + top-site markers. Nothing else.
 export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]): MinChartHandle {
   const annotations: Record<string, any> = Object.fromEntries(
     top.map((s, i) => [`top${i}`, siteAnnotation(s)]));
   const chart = new Chart(canvas, {    type: "line",
+    plugins: [hoverLinePlugin],
     data: { datasets: [
       { label: "min",
         data: rows.map(r => ({ x: Number(r.position), y: Number(r.min) })),
@@ -86,6 +113,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
         const pos = els.length ? Number(rows[els[0].index].position) : null;
         handle.pin(pos);
         bus.setMarked(pos);
+        clickCb?.(pos);
       },
       plugins: {
         legend: { labels: { boxWidth: 12 } },
@@ -107,7 +135,10 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
                   onZoom: ({ chart: c }) => showReset(c) },
         },
       },
-      onHover: (_, els) => { if (hoverCb) hoverCb(els.length ? rows[els[0].index].position : null); },
+      onHover: (_, els) => {
+        hoverPos = els.length ? Number(rows[els[0].index].position) : null;
+        if (hoverCb) hoverCb(els.length ? rows[els[0].index].position : null);
+      },
     },
   });
 
@@ -124,7 +155,9 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
   const handle: MinChartHandle = {
     chart,
     setHoverCallback: (cb) => { hoverCb = cb; },
+    setClickCallback: (cb) => { clickCb = cb; },
     highlight: (pos) => {
+      hoverPos = pos; // cross-view hovers (sequence/MSA/chips) draw the guide too
       const idx = pos == null ? -1 : rows.findIndex(r => Number(r.position) === pos);
       const ae = idx < 0 ? [] : [{ datasetIndex: MIN_DATASET_INDEX, index: idx }];
       chart.setActiveElements(ae);
@@ -140,6 +173,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       chart.update();
     },
     pin: (pos) => {
+      hoverPos = pos; // keep the guide in sync with click-to-mark as well
       const anns = (chart.options.plugins as any).annotation.annotations as Record<string, any>;
       if (pos == null) delete anns.pinned;
       else anns.pinned = { ...siteAnnotation({ position: pos, min: 0, min_feature: "" }),

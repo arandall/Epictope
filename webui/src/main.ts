@@ -1,6 +1,5 @@
 import { fetchScore, fetchInfo, fetchMsa, fetchStatus } from "./api";
 import { renderMinChart, topSites, type MinChartHandle } from "./chart";
-import { renderSequence } from "./sequence";
 import { renderMsa, type MsaHandle } from "./msa";
 import { renderResultsHeader } from "./info";
 import { mountSearch, type SearchHit } from "./search";
@@ -22,10 +21,11 @@ let markUnsub: (() => void) | null = null;
 
 function showSkeletons() {
   $("results").hidden = false;
+  document.body.dataset.view = "results";
   $("searchZone").classList.add("compact");
   $("errorBox").innerHTML = "";
   $("reshead").innerHTML = "";
-  for (const id of ["chartCard", "seqCard", "msaCard"]) {
+  for (const id of ["chartCard", "msaCard"]) {
     $(id).innerHTML = `<div class="skeleton"></div>`;
   }
 }
@@ -56,11 +56,12 @@ async function showResults(acc: string) {
         const inp = document.querySelector<HTMLInputElement>("#search input");
         inp?.focus(); inp?.select();
       });
-    $("seqCard").innerHTML = `<p class="overline">Query sequence</p><div id="sequence"></div>`;
-    renderSequence($("sequence"), rows, { msa, wrap, onPositionClick: (pos) => bus.setMarked(pos) });
     $("msaCard").innerHTML = `<p class="overline">Multiple sequence alignment</p><div id="msa"></div>`;
     msaHandle = renderMsa($("msa"), msa, { wrap, onPositionClick: (pos) => bus.setMarked(pos) });
     chartHandle.setHoverCallback((pos) => bus.setActive(pos));
+    // Clicking the chart marks the position and scrolls the window so the
+    // matching MSA row (its chunk) is in view.
+    chartHandle.setClickCallback((pos) => { if (pos != null) msaHandle?.scrollToPosition(pos); });
     busUnsub?.(); markUnsub?.();
     busUnsub = bus.onActive((pos) => chartHandle?.highlight(pos));
     markUnsub = bus.onMarked((pos) => chartHandle?.pin(pos));
@@ -68,6 +69,7 @@ async function showResults(acc: string) {
     msaHandle = null;
     // fetchScore/fetchInfo/fetchMsa reject with ApiError (e.g. stale ?id= deep link).
     $("results").hidden = true;
+    delete document.body.dataset.view;
     $("searchZone").classList.remove("compact");
     $("errorBox").innerHTML = `<div class="card errorcard">
       <h3>Prediction failed for ${esc(acc)}</h3><p>${esc(e instanceof Error ? e.message : String(e))}</p>
@@ -89,10 +91,21 @@ function showError(acc: string, message: string) {
   };
 }
 
-const runPanel = mountRunPanel($("runPanel"), (acc) => { setUrl(acc); showResults(acc); }, showError);
+const runPanel = mountRunPanel($("runPanel"), (acc) => {
+  // "View results" / finished job: swap to the dedicated results view.
+  runPanel.clear();
+  $("runPanel").hidden = true;
+  setUrl(acc);
+  showResults(acc);
+}, showError);
 
 mountSearch($("search"), (hit: SearchHit) => {
   $("errorBox").innerHTML = "";
+  // A fresh selection supersedes whatever is on screen: drop the old results
+  // and the view marker so nothing stale shows behind the new search.
+  $("results").hidden = true;
+  delete document.body.dataset.view;
+  $("runPanel").hidden = false;
   pushRecent({ q: hit.accession }); // selections count as recent searches too
   setUrl(hit.accession);
   runPanel.select(hit);

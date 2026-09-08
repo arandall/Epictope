@@ -58,6 +58,29 @@ describe("rulerFor", () => {
     expect(tick[9]).toBe("|");               // column 200 is a tick
     expect(rulerFor(190, 20).split("\n")[0].slice(7, 10)).toBe("200");
   });
+
+  it("places a down arrow on the tick line and the column number above it", () => {
+    const [label, tick] = rulerFor(40, 20, 45).split("\n"); // absolute column 46
+    expect(tick[5]).toBe("▼");
+    expect(label.slice(4, 6)).toBe("46");
+    expect(label).toHaveLength(20);
+    expect(tick).toHaveLength(20);
+  });
+  it("keeps other ticks and labels intact when marking", () => {
+    const [label, tick] = rulerFor(0, 20, 4).split("\n");
+    expect(tick[9]).toBe("|");
+    expect(label.slice(8, 10)).toBe("10");
+    expect(tick[4]).toBe("▼");
+    expect(label.slice(3, 5)).toBe(" 5");
+  });
+  it("replaces the tick under a numbered column with the arrow", () => {
+    const [label, tick] = rulerFor(0, 20, 9).split("\n"); // column 10
+    expect(tick[9]).toBe("▼");
+    expect(label.slice(8, 10)).toBe("10");
+  });
+  it("ignores a mark outside the chunk", () => {
+    expect(rulerFor(0, 20, 20)).toBe(rulerFor(0, 20));
+  });
 });
 
 describe("renderMsa", () => {
@@ -95,6 +118,19 @@ describe("renderMsa", () => {
     expect(names).toContain("Q5MD89");
     expect(names.some(n => n?.includes("data/CDS"))).toBe(false);
     expect(el.querySelector(".msaname.isquery")!.textContent).toBe("Q5MD89");
+  });
+
+  it("pins the query row directly under the ruler in every chunk", () => {
+    const seq = "A".repeat(45);
+    const { el } = mountMsa([
+      { id: "H1", seq }, { id: "H2", seq }, { id: "Q", seq }, { id: "H3", seq },
+    ], "Q", 20);
+    expect(el.querySelectorAll(".msachunk")).toHaveLength(3);
+    el.querySelectorAll(".msachunk").forEach(chunk => {
+      const rows = chunk.querySelectorAll(".msablock .msarow");
+      expect(rows[1].classList.contains("queryrow")).toBe(true); // row 0 is the ruler
+      expect(rows[1].querySelector(".msaname")!.textContent).toBe("Q");
+    });
   });
 
   it("hovering a cell sets the active query residue and shows the tooltip at the mouse", () => {
@@ -146,6 +182,31 @@ describe("renderMsa", () => {
     expect(el.querySelector(".cell.marked")!.getAttribute("data-col")).toBe("1");
     handle.markPosition(null);
     expect(el.querySelectorAll(".cell.marked")).toHaveLength(0);
+  });
+
+  it("markPosition draws the arrow + column number in the owning chunk's ruler only", () => {
+    const { el, handle } = mountMsa([{ id: "Q", seq: "ACDEFG" }, { id: "M", seq: "ACDEFG" }], "Q", 4);
+    handle.markPosition(5); // residue 5 -> column 4 -> second chunk (columns 5–6)
+    const chunks = el.querySelectorAll(".msachunk");
+    expect(chunks[0].querySelectorAll(".rulermark")).toHaveLength(0);
+    expect(chunks[0].querySelector(".msaruler")!.textContent).toBe(rulerFor(0, 4));
+    // two .rulermark spans: the column number on the label line, "▼" on the tick line
+    const marks = chunks[1].querySelectorAll(".rulermark");
+    expect(marks).toHaveLength(2);
+    expect(marks[0].textContent).toBe("5"); // absolute alignment column
+    expect(marks[1].textContent).toBe("▼");
+    // ruler text (incl. the two-line layout) is unchanged by the spans
+    expect(chunks[1].querySelector(".msaruler")!.textContent).toBe(rulerFor(4, 2, 4));
+  });
+
+  it("markPosition(null) restores the plain rulers", () => {
+    const { el, handle } = mountMsa([{ id: "Q", seq: "ACDEFG" }, { id: "M", seq: "ACDEFG" }], "Q", 4);
+    handle.markPosition(5);
+    handle.markPosition(null);
+    expect(el.querySelectorAll(".rulermark")).toHaveLength(0);
+    const rulers = el.querySelectorAll(".msaruler");
+    expect(rulers[0].textContent).toBe(rulerFor(0, 4));
+    expect(rulers[1].textContent).toBe(rulerFor(4, 2));
   });
 
   it("scrollToPosition scrolls the owning chunk into view", () => {

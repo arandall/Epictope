@@ -80,6 +80,11 @@ describe("renderMinChart", () => {
     expect((chart.data.datasets[1] as any).hidden).toBeFalsy();
   });
 
+  it("registers the vertical hover-line guide plugin", () => {
+    const { chart } = makeChart();
+    expect((chart.config.plugins as any[]).some(p => p.id === "hoverline")).toBe(true);
+  });
+
   it("top-site annotation labels are white on a red box", () => {
     const { chart } = makeChart();
     const anns = (chart.options.plugins as any).annotation.annotations;
@@ -142,6 +147,15 @@ describe("renderMinChart", () => {
     chart.canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect((chart.options.plugins as any).annotation.annotations.pinned).toBeUndefined();
     expect(bus.marked).toBeNull();
+  });
+  it("clicking a point fires the click callback with its position; empty area fires null", () => {
+    const { chart, setClickCallback } = makeChart();
+    const cb = vi.fn();
+    setClickCallback(cb);
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 2 }]);
+    expect(cb).toHaveBeenCalledWith(3);
+    (chart.options.onClick as any)({}, []);
+    expect(cb).toHaveBeenCalledWith(null);
   });
   it("onZoom shows a reset button that restores the scale", () => {
     const { chart } = makeChart();

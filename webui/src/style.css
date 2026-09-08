@@ -22,19 +22,34 @@ header.top .tagline { color: var(--muted); font-size: .85rem; }
 .banner { background: #fef3c7; color: #92400e; padding: .45rem 1.25rem; font-size: .85rem; }
 @media (prefers-color-scheme: dark) { .banner { background: #3a2f0b; color: #fbbf24; } }
 
-main { max-width: 980px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1.25rem; }
+main { margin: 0 auto; padding: 1.25rem; display: grid;
+       grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+
+/* Results view: full-width single column so the chart and MSA use the whole
+   window. Cap every track at 100% so an unbreakable sequence strip can't
+   stretch the grid past the card. The [hidden] guard is required because
+   `display: grid` here would otherwise override the hidden attribute and
+   show three empty cards on a fresh page. */
+#results { display: grid; grid-template-columns: minmax(0, 100%); gap: 1.25rem;
+           width: 100%; }
+#results[hidden] { display: none; }
 
 /* Search */
 .searchzone { margin: 8vh auto 0; max-width: 640px; width: 100%; transition: margin .15s ease; }
 .searchzone.compact { margin-top: 0; }
-.searchbox { position: relative; display: flex; gap: .5rem; }
-.searchbox input { flex: 1; width: 100%; padding: .8rem 1rem; font-size: 1.05rem; border-radius: var(--radius);
+.searchbox { display: flex; flex-wrap: wrap; align-items: stretch; gap: .5rem; }
+/* Own full-width row: the dropdown is positioned against this row, so it
+   starts below the input and never overlaps the Search button. */
+.searchrow { position: relative; flex: 1 1 100%; }
+.searchbox .searchbtn { align-self: flex-start; }
+.searchbox input { width: 100%; padding: .8rem 1rem; font-size: 1.05rem; border-radius: var(--radius);
                    border: 1px solid var(--border); background: var(--card); color: var(--ink);
                    box-shadow: var(--shadow); }
 .searchbox input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.autocomplete { position: absolute; z-index: 10; left: 0; right: 0; margin: .35rem 0 0; padding: .25rem;
+.autocomplete { position: absolute; z-index: 50; top: 100%; left: 0; right: 0; margin: .4rem 0 0; padding: .25rem;
                 list-style: none; background: var(--card); border: 1px solid var(--border);
-                border-radius: var(--radius); box-shadow: var(--shadow); max-height: 320px; overflow-y: auto; }
+                border-radius: var(--radius); box-shadow: 0 8px 24px rgba(15,23,42,.14);
+                max-height: 340px; overflow-y: auto; }
 .autocomplete li { padding: .5rem .6rem; border-radius: 8px; cursor: pointer; font-size: .92rem; }
 .autocomplete li.active, .autocomplete li:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .autocomplete li.empty { cursor: default; color: var(--muted); }
@@ -42,7 +57,7 @@ main { max-width: 980px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1
 
 /* Cards & tags */
 .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
-        box-shadow: var(--shadow); padding: 1rem 1.25rem; }
+        box-shadow: var(--shadow); padding: 1rem 1.25rem; min-width: 0; }
 .card > .overline { text-transform: uppercase; letter-spacing: .08em; font-size: .7rem;
                     color: var(--muted); margin: 0 0 .5rem; }
 .tag { background: var(--accent); color: #fff; border-radius: 4px; padding: 0 .4rem;
@@ -51,6 +66,7 @@ main { max-width: 980px; margin: 0 auto; padding: 1.25rem; display: grid; gap: 1
 .sub { color: var(--muted); margin: .15rem 0 0; }
 
 /* Selected protein + run */
+#runPanel { max-width: 780px; margin: 0 auto; width: 100%; }
 .selected { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .selected h2 { margin: 0; font-size: 1.35rem; letter-spacing: -.01em; }
 button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
@@ -86,11 +102,6 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .chartwrap canvas { max-width: 100%; }
 .resetzoom { position: absolute; top: .5rem; right: .5rem; font-size: .8rem; color: var(--muted); }
 
-/* Sequence strip */
-.seqstrip { display: flex; flex-wrap: wrap; font-family: var(--mono); font-size: 12px; line-height: 1.6; }
-.seqstrip .res { padding: 0 1px; cursor: pointer; border-radius: 2px; }
-.seqstrip .res.active { background: #ffd166; outline: 1px solid var(--danger); }
-
 /* MSA */
 .msahead { display: flex; justify-content: flex-end; margin-bottom: .4rem; }
 .legend { font-size: .8rem; color: var(--muted); display: flex; gap: .8rem; align-items: center; }
@@ -119,7 +130,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 @media print {
   :root { --bg: #fff; --card: #fff; --ink: #000; --muted: #444; --border: #ccc; --shadow: none; }
   header.top .tagline, .banner, .searchzone, .downloads, .advanced, .progress { display: none !important; }
-  main { max-width: none; padding: 0; }
+  main { padding: 0; }
   .card { border: none; box-shadow: none; padding: .5rem 0; break-inside: avoid; }
   .msaviewport { max-height: none; overflow: visible; border: none; }
   .chartwrap { height: auto; }
@@ -127,7 +138,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 
 /* Dark mode: keep glyphs readable on hardcoded light fills */
 @media (prefers-color-scheme: dark) {
-  .cell.blue, .cell.yellow, .seqstrip .res.active { color: #0f172a; }
+  .cell.blue, .cell.yellow { color: #0f172a; }
 }
 
 /* Recent searches */
@@ -145,24 +156,29 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 
 /* MSA chunked layout: each chunk scrolls horizontally on its own, so the page
    never widens and the other cards stay visible. */
-.msachunk { margin-bottom: 1rem; }
+#msa { max-width: 100%; }
+.msachunk { margin-bottom: 1rem; max-width: 100%; }
 .chunkhead { font-size: .75rem; color: var(--muted); margin-bottom: .15rem; }
 .msablock { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
 .cell { cursor: pointer; }
 .cell:hover { outline: 1px solid var(--ink); outline-offset: -1px; }
 .cell.inrange { background: #9ca3af; color: #111827; }
-.cell.marked { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Marked column: invert the cells (no bold — it could break monospace advance
+   widths and shift the strips out of column alignment). */
+.cell.marked { background: var(--ink); color: var(--card);
+               outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Ruler: only the arrow + column number at the marked column get the accent
+   colour — never the whole ruler row. The arrow sits in a fixed 1ch box so a
+   fallback-font glyph can't shift the ruler out of column alignment. (Literal
+   #b91c1c = --danger: keeping declarations var()-free lets jsdom resolve the
+   computed colour in layout tests.) */
+.rulermark { color: #b91c1c; font-weight: 700; }
+.rulermark.arr { display: inline-block; width: 1ch; }
 .msaname.isquery { font-weight: 700; color: var(--accent-ink); }
+/* Query row pinned under the ruler in every chunk */
+.msarow.queryrow { border-bottom: 1px dashed var(--border); margin-bottom: 2px; }
 .msatip { position: fixed; z-index: 30; pointer-events: none; background: var(--ink);
           color: var(--card); font-size: .75rem; padding: .2rem .5rem; border-radius: 6px; }
-
-/* Query sequence aligned to the MSA columns */
-.seqchunk { margin-bottom: .5rem; }
-.seqstrip.aligned { display: inline-block; white-space: pre; font-family: var(--mono);
-                    font-size: 11px; line-height: 1.5; }
-.seqstrip.aligned .res { padding: 0; }   /* same advance width as MSA cells */
-.res.gap { color: var(--muted); }
-.res.marked { background: var(--accent); color: #fff; }
 
 @media (prefers-color-scheme: dark) {
   .cell.inrange { background: #6b7280; color: #f8fafc; }
