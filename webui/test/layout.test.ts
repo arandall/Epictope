@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 // Side-effect import: with `test.css` enabled, vitest injects the real
 // stylesheet into the document, so these tests assert the actual cascade a
 // browser would apply, not a restated copy of the CSS.
@@ -38,5 +38,33 @@ describe("page layout", () => {
     // the arrow sits in a fixed 1ch box so a fallback-font glyph can't shift
     // the ruler out of column alignment
     expect(getComputedStyle(document.querySelector(".rulermark.arr")!).width).toBe("1ch");
+  });
+});
+
+describe("search layout", () => {
+  it("keeps the Search button beside the input, out of the dropdown's way", () => {
+    // Same markup shape mountSearch builds; asserts the real cascade.
+    document.body.innerHTML = `<div class="searchbox">
+      <div class="searchrow"><input type="search"/></div>
+      <button class="primary searchbtn">Search</button></div>`;
+    // No wrapping: the button can never drop under the input row where the
+    // autocomplete dropdown (top: 100% of .searchrow) would cover it.
+    expect(getComputedStyle(document.querySelector(".searchbox")!).flexWrap).toBe("nowrap");
+    // The input row grows to fill, so the button hugs the input's right edge.
+    expect(getComputedStyle(document.querySelector(".searchrow")!).flexGrow).toBe("1");
+    expect(getComputedStyle(document.querySelector(".searchbtn")!).flexGrow).toBe("0");
+  });
+});
+
+describe("dark theme", () => {
+  beforeEach(() => document.documentElement.removeAttribute("data-theme"));
+
+  it("gives MSA cells deep, readable fills instead of the light pastels", () => {
+    document.documentElement.dataset.theme = "dark";
+    document.body.innerHTML = `<span class="cell blue">A</span><span class="cell yellow">G</span>`;
+    expect(getComputedStyle(document.querySelector(".cell.blue")!).backgroundColor)
+      .toBe("rgb(21, 94, 117)"); // deep teal, not the light pastel #a8dadc
+    expect(getComputedStyle(document.querySelector(".cell.yellow")!).backgroundColor)
+      .toBe("rgb(161, 98, 7)"); // #a16207, not the light #ffd166
   });
 });

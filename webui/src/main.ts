@@ -6,6 +6,7 @@ import { mountSearch, type SearchHit } from "./search";
 import { mountRunPanel } from "./run";
 import { parseUrl, setUrl, onUrlChange, parseChunk } from "./state";
 import { pushRecent } from "./recent";
+import { initTheme, mountThemeToggle } from "./theme";
 import { bus } from "./sync";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -130,6 +131,9 @@ async function watchStatus() {
   }
 }
 watchStatus();
+
+initTheme(); // re-applies the pre-paint choice + installs OS tracking
+mountThemeToggle(document.querySelector("header.top")!);
 
 // Deep link + browser back/forward: ?id=<acc> restores results from cache.
 const initial = parseUrl();

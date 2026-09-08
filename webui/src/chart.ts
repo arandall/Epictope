@@ -51,12 +51,52 @@ export interface MinChartHandle {
   exportPng(): string;
 }
 
-function siteAnnotation(s: TopSite) {
+// Theme tokens with light literals as fallbacks (jsdom/print never resolve
+// vars; a missing token must never yield "undefined" colours).
+function cssVar(name: string, fallback: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+function palette() {
+  return {
+    ink: cssVar("--ink", "#0f172a"),
+    muted: cssVar("--muted", "#64748b"),
+    grid: cssVar("--grid", "rgba(15,23,42,.08)"),
+    hoverline: cssVar("--hoverline", "rgba(15,23,42,.85)"),
+    accent: cssVar("--accent", "#0d9488"),
+    accentInk: cssVar("--accent-ink", "#134e4a"),
+    danger: cssVar("--danger", "#b91c1c"),
+    card: cssVar("--card", "#ffffff"),
+  };
+}
+
+// Re-read the tokens onto a live chart (theme toggle without a re-query).
+function applyTheme(c: Chart): void {
+  const p = palette();
+  for (const scale of Object.values(c.options.scales ?? {})) {
+    if (!scale) continue;
+    const s = scale as any; // this chart only registers linear x/y scales
+    s.title = { ...s.title, color: p.muted };
+    s.ticks = { ...s.ticks, color: p.muted };
+    s.grid = { ...s.grid, color: p.grid };
+  }
+  (c.options.plugins as any).legend.labels.color = p.ink;
+  c.update("none");
+}
+const liveCharts = new Set<Chart>();
+window.addEventListener("themechange", () => {
+  for (const c of liveCharts) {
+    if (!c.canvas.isConnected) { liveCharts.delete(c); continue; }
+    applyTheme(c);
+  }
+});
+
+function siteAnnotation(s: TopSite, p = palette()) {
   return {
     type: "line" as const, scaleID: "x", value: s.position,
-    borderColor: "#b91c1c", borderWidth: 1, borderDash: [4, 4],
+    borderColor: p.danger, borderWidth: 1, borderDash: [4, 4],
     label: { display: true, content: `#${s.position}`, position: "start" as const,
-             backgroundColor: "#b91c1c", color: "#ffffff", borderRadius: 3, padding: 3,
+             backgroundColor: p.danger, color: "#ffffff", borderRadius: 3, padding: 3,
              font: { size: 10, weight: "bold" as const } },
   };
 }
@@ -74,7 +114,7 @@ const hoverLinePlugin = {
     if (x == null || !area || x < area.left || x > area.right) return;
     const ctx = c.ctx;
     ctx.save();
-    ctx.strokeStyle = "rgba(15, 23, 42, 0.85)";
+    ctx.strokeStyle = cssVar("--hoverline", "rgba(15, 23, 42, 0.85)");
     ctx.lineWidth = 1.5;
     ctx.setLineDash([3, 3]);
     ctx.beginPath();
@@ -88,26 +128,30 @@ const hoverLinePlugin = {
 // Paper-faithful chart (Fig 2C / plot_scores.R): raw `min` filled area +
 // dashed window-7 smoothed overlay + top-site markers. Nothing else.
 export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopSite[]): MinChartHandle {
+  const p = palette();
   const annotations: Record<string, any> = Object.fromEntries(
-    top.map((s, i) => [`top${i}`, siteAnnotation(s)]));
-  const chart = new Chart(canvas, {    type: "line",
+    top.map((s, i) => [`top${i}`, siteAnnotation(s, p)]));
+  const chart = new Chart(canvas, {
+    type: "line",
     plugins: [hoverLinePlugin],
     data: { datasets: [
       { label: "min",
         data: rows.map(r => ({ x: Number(r.position), y: Number(r.min) })),
-        borderColor: "#0d9488", backgroundColor: "rgba(13,148,136,0.15)",
+        borderColor: p.accent, backgroundColor: "rgba(13,148,136,0.15)",
         fill: true, pointRadius: 0, borderWidth: 2, tension: 0.15,
         hidden: true },
       { label: "min (smoothed)",
         data: movingAverage(rows, "min", 7).map((y, i) => ({ x: Number(rows[i].position), y })),
-        borderColor: "#134e4a", borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
+        borderColor: p.accentInk, borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
     ] },
     options: {
       parsing: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { type: "linear", title: { display: true, text: "Amino acid position" } },
-        y: { min: 0, max: 1, title: { display: true, text: "Minimum feature score (0–1)" } },
+        x: { type: "linear", title: { display: true, text: "Amino acid position", color: p.muted },
+             ticks: { color: p.muted }, grid: { color: p.grid } },
+        y: { min: 0, max: 1, title: { display: true, text: "Minimum feature score (0–1)", color: p.muted },
+             ticks: { color: p.muted }, grid: { color: p.grid } },
       },
       onClick: (_, els) => {
         const pos = els.length ? Number(rows[els[0].index].position) : null;
@@ -116,7 +160,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
         clickCb?.(pos);
       },
       plugins: {
-        legend: { labels: { boxWidth: 12 } },
+        legend: { labels: { boxWidth: 12, color: p.ink } },
         tooltip: {
           filter: (it: any): boolean => !(chart.data.datasets[it.datasetIndex] as any).hidden,
           callbacks: {
@@ -141,7 +185,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       },
     },
   });
-
+  liveCharts.add(chart); // themechange re-colours; pruned when disconnected
   // "Reset zoom" appears after the first zoom and removes itself on reset.
   function showReset(c: Chart) {
     if (canvas.parentElement!.querySelector("button.resetzoom")) return;
@@ -177,19 +221,20 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       const anns = (chart.options.plugins as any).annotation.annotations as Record<string, any>;
       if (pos == null) delete anns.pinned;
       else anns.pinned = { ...siteAnnotation({ position: pos, min: 0, min_feature: "" }),
-                           borderColor: "#0f172a", borderWidth: 2, borderDash: [],
+                           borderColor: cssVar("--ink", "#0f172a"), borderWidth: 2, borderDash: [],
                            label: { display: true, content: `▸ #${pos}`, position: "start",
-                                    color: "#0f172a", font: { size: 11, weight: "bold" } } };
+                                    color: cssVar("--ink", "#0f172a"), font: { size: 11, weight: "bold" } } };
       chart.update();
     },
-    // 2x, white background: draw the chart onto an offscreen canvas at 2x size.
+    // 2x, background matching the current theme: draw the chart onto an
+    // offscreen canvas at 2x size so the export looks like the screen.
     exportPng: () => {
       const src = chart.canvas;
       const out = document.createElement("canvas");
       out.width = src.width * 2;
       out.height = src.height * 2;
       const ctx = out.getContext("2d")!;
-      ctx.fillStyle = "#ffffff";
+      ctx.fillStyle = cssVar("--card", "#ffffff");
       ctx.fillRect(0, 0, out.width, out.height);
       ctx.scale(2, 2);
       ctx.drawImage(src, 0, 0);

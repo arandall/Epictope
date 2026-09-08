@@ -1,13 +1,21 @@
-/* Design tokens */
+/* Design tokens. The theme is resolved once (inline <head> script /
+   src/theme.ts) into <html data-theme="light|dark"> — CSS never branches on
+   prefers-color-scheme, so a manual choice always wins. */
 :root {
+  color-scheme: light;
   --bg: #f8fafc; --card: #ffffff; --ink: #0f172a; --muted: #64748b;
-  --accent: #0d9488; --accent-ink: #134e4a; --danger: #b91c1c;
+  --accent: #0d9488; --accent-ink: #134e4a; --accent-hover: #134e4a;
+  --danger: #b91c1c;
   --border: #e2e8f0; --shadow: 0 1px 3px rgba(15,23,42,.08), 0 4px 12px rgba(15,23,42,.05);
+  --grid: rgba(15,23,42,.08); --hoverline: rgba(15,23,42,.85);
   --radius: 12px; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #0b1220; --card: #111a2c; --ink: #e2e8f0; --muted: #94a3b8;
-          --border: #1e293b; --shadow: 0 1px 3px rgba(0,0,0,.4); }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0b1220; --card: #111a2c; --ink: #e2e8f0; --muted: #94a3b8;
+  --accent-ink: #5eead4; --accent-hover: #0f766e;
+  --border: #1e293b; --shadow: 0 1px 3px rgba(0,0,0,.4);
+  --grid: rgba(148,163,184,.16); --hoverline: rgba(226,232,240,.9);
 }
 
 * { box-sizing: border-box; }
@@ -19,8 +27,11 @@ header.top { display: flex; align-items: baseline; gap: .75rem; padding: .9rem 1
              background: var(--card); border-bottom: 1px solid var(--border); }
 header.top h1 { font-size: 1.25rem; margin: 0; letter-spacing: -.01em; }
 header.top .tagline { color: var(--muted); font-size: .85rem; }
+.themebtn { margin-left: auto; align-self: center; display: inline-flex; align-items: center;
+            justify-content: center; width: 2rem; height: 2rem; padding: 0; color: var(--muted); }
+.themebtn:hover { color: var(--ink); }
 .banner { background: #fef3c7; color: #92400e; padding: .45rem 1.25rem; font-size: .85rem; }
-@media (prefers-color-scheme: dark) { .banner { background: #3a2f0b; color: #fbbf24; } }
+[data-theme="dark"] .banner { background: #3a2f0b; color: #fbbf24; }
 
 main { margin: 0 auto; padding: 1.25rem; display: grid;
        grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
@@ -37,11 +48,13 @@ main { margin: 0 auto; padding: 1.25rem; display: grid;
 /* Search */
 .searchzone { margin: 8vh auto 0; max-width: 640px; width: 100%; transition: margin .15s ease; }
 .searchzone.compact { margin-top: 0; }
-.searchbox { display: flex; flex-wrap: wrap; align-items: stretch; gap: .5rem; }
-/* Own full-width row: the dropdown is positioned against this row, so it
-   starts below the input and never overlaps the Search button. */
-.searchrow { position: relative; flex: 1 1 100%; }
-.searchbox .searchbtn { align-self: flex-start; }
+/* One row: input grows, Search hugs its right edge. The autocomplete dropdown
+   (top: 100% of .searchrow) opens below the input and can never cover the
+   button. flex-wrap/grow are declared longhand so layout tests read the real
+   cascade in jsdom. */
+.searchbox { display: flex; flex-wrap: nowrap; align-items: stretch; gap: .5rem; }
+.searchrow { position: relative; flex-grow: 1; flex-basis: 0; min-width: 0; }
+.searchbtn { flex-grow: 0; }
 .searchbox input { width: 100%; padding: .8rem 1rem; font-size: 1.05rem; border-radius: var(--radius);
                    border: 1px solid var(--border); background: var(--card); color: var(--ink);
                    box-shadow: var(--shadow); }
@@ -75,7 +88,7 @@ button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid v
 button:hover { border-color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff;
                  font-weight: 600; padding: .6rem 1.2rem; }
-button.primary:hover { background: var(--accent-ink); }
+button.primary:hover { background: var(--accent-hover); }
 button.primary:disabled { opacity: .55; cursor: wait; }
 button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .advanced { margin-top: .6rem; }
@@ -117,6 +130,10 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .msaruler { color: var(--muted); } /* inherits .msastrip font metrics = aligned columns */
 .cell.red { background: #e63946; color: #fff; } .cell.blue { background: #a8dadc; } .cell.yellow { background: #ffd166; }
 .cell.active { outline: 2px solid var(--ink); outline-offset: -2px; }
+[data-theme="dark"] .cell.blue { background: #155e75; color: #cffafe; }
+[data-theme="dark"] .cell.yellow { background: #a16207; color: #fef3c7; }
+[data-theme="dark"] .legend .sw.blue { background: #155e75; }
+[data-theme="dark"] .legend .sw.yellow { background: #a16207; }
 
 /* Skeleton + error */
 .skeleton { border-radius: var(--radius); min-height: 120px;
@@ -128,17 +145,12 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 
 /* Print: clean report, light palette, MSA unrolled */
 @media print {
-  :root { --bg: #fff; --card: #fff; --ink: #000; --muted: #444; --border: #ccc; --shadow: none; }
+  :root, :root[data-theme="dark"] { --bg: #fff; --card: #fff; --ink: #000; --muted: #444; --border: #ccc; --shadow: none; }
   header.top .tagline, .banner, .searchzone, .downloads, .advanced, .progress { display: none !important; }
   main { padding: 0; }
   .card { border: none; box-shadow: none; padding: .5rem 0; break-inside: avoid; }
   .msaviewport { max-height: none; overflow: visible; border: none; }
   .chartwrap { height: auto; }
-}
-
-/* Dark mode: keep glyphs readable on hardcoded light fills */
-@media (prefers-color-scheme: dark) {
-  .cell.blue, .cell.yellow { color: #0f172a; }
 }
 
 /* Recent searches */
@@ -180,9 +192,8 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 .msatip { position: fixed; z-index: 30; pointer-events: none; background: var(--ink);
           color: var(--card); font-size: .75rem; padding: .2rem .5rem; border-radius: 6px; }
 
-@media (prefers-color-scheme: dark) {
-  .cell.inrange { background: #6b7280; color: #f8fafc; }
-}
+[data-theme="dark"] .cell.inrange { background: #6b7280; color: #f8fafc; }
+[data-theme="dark"] .rulermark { color: #f87171; }
 
 /* Print: chunks become the report's lines (~200 columns each); smaller mono
    type keeps a chunk within the page width. Narrower lines? Use ?msa-chunk=N. */

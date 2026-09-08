@@ -4,6 +4,17 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>EpicTope — epitope tag insertion site prediction</title>
+  <script>
+    // Resolve the theme before first paint (no light-mode flash for dark
+    // users): stored choice, else OS colour scheme, else light. Must match
+    // src/theme.ts resolution.
+    try {
+      var t = localStorage.getItem("epictope.theme");
+      if (t !== "light" && t !== "dark")
+        t = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      document.documentElement.dataset.theme = t;
+    } catch (e) { document.documentElement.dataset.theme = "light"; }
+  </script>
   <link rel="stylesheet" href="./src/style.css"/>
 </head>
 <body>
