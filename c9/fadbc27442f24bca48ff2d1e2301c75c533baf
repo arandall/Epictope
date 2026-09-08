@@ -1,0 +1,20 @@
+webui/src/state.ts
+  h_e49bc6578e470a 20-29
+webui/src/sync.ts
+  h_e49bc6578e470a 2-13
+webui/test/state.test.ts
+  h_e49bc6578e470a 4,28-44
+webui/test/sync.test.ts
+  h_e49bc6578e470a 12-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.2",
+  "base_commit_sha": "c9fadbc27442f24bca48ff2d1e2301c75c533baf",
+  "prompts": {},
+  "humans": {
+    "h_e49bc6578e470a": {
+      "author": "Allan Randall <me@allanrandall.com>"
+    }
+  }
+}
