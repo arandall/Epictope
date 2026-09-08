@@ -74,6 +74,31 @@ describe("renderMinChart", () => {
     expect(anns.top0.value).toBe(2); // highest peak
     expect(anns.top1.value).toBe(5);
   });
+  it("hides the raw min dataset by default; smoothed stays visible", () => {
+    const { chart } = makeChart();
+    expect(chart.data.datasets[MIN_DATASET_INDEX].hidden).toBe(true);
+    expect((chart.data.datasets[1] as any).hidden).toBeFalsy();
+  });
+
+  it("top-site annotation labels are white on a red box", () => {
+    const { chart } = makeChart();
+    const anns = (chart.options.plugins as any).annotation.annotations;
+    expect(anns.top0.label.backgroundColor).toBe("#b91c1c");
+    expect(anns.top0.label.color).toBe("#ffffff");
+  });
+
+  it("highlight() anchors the tooltip at the data point, not (0,0)", () => {
+    const { chart, highlight } = makeChart();
+    const spy = vi.spyOn(chart.tooltip!, "setActiveElements");
+    highlight(5);
+    const pt: any = chart.getDatasetMeta(MIN_DATASET_INDEX).data[4];
+    expect(spy).toHaveBeenCalledWith(
+      // tooltip items ride the smoothed dataset: the raw one is hidden and
+      // filtered out of the tooltip, but the anchor pixel is the same point
+      [{ datasetIndex: 1, index: 4 }],
+      { x: pt.x, y: pt.y },
+    );
+  });
   it("highlight() pins the min dataset; tooltip title reads rows", () => {
     const { chart, highlight } = makeChart();
     highlight(5);
@@ -103,14 +128,20 @@ describe("renderMinChart", () => {
     expect(label({ dataset: { label: "min" }, dataIndex: 0, formattedValue: "0.1" }))
       .toBe("min: 0.1 · limiting: x");
   });
-  it("clicking empty chart area unpins; Escape unpins", () => {
+  it("clicking empty chart area unpins; Escape unpins; clicking a point marks it", async () => {
+    const { bus } = await import("../src/sync");
     const { chart, pin } = makeChart();
     pin(5);
     (chart.options.onClick as any)({}, []);
     expect((chart.options.plugins as any).annotation.annotations.pinned).toBeUndefined();
-    pin(3);
+    expect(bus.marked).toBeNull();
+    // clicking a data point pins + marks that position
+    (chart.options.onClick as any)({}, [{ datasetIndex: 0, index: 2 }]);
+    expect((chart.options.plugins as any).annotation.annotations.pinned.value).toBe(3);
+    expect(bus.marked).toBe(3);
     chart.canvas.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect((chart.options.plugins as any).annotation.annotations.pinned).toBeUndefined();
+    expect(bus.marked).toBeNull();
   });
   it("onZoom shows a reset button that restores the scale", () => {
     const { chart } = makeChart();

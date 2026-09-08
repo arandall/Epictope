@@ -1,6 +1,7 @@
 import { Chart, LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, Filler } from "chart.js";
 import annotationPlugin from "chartjs-plugin-annotation";
 import zoomPlugin from "chartjs-plugin-zoom";
+import { bus } from "./sync";
 Chart.register(LineController, LineElement, PointElement, LinearScale, Tooltip, Legend, CategoryScale, Filler, annotationPlugin, zoomPlugin);
 
 export interface TopSite { position: number; min: number; min_feature: string; }
@@ -53,7 +54,8 @@ function siteAnnotation(s: TopSite) {
     type: "line" as const, scaleID: "x", value: s.position,
     borderColor: "#b91c1c", borderWidth: 1, borderDash: [4, 4],
     label: { display: true, content: `#${s.position}`, position: "start" as const,
-             color: "#b91c1c", font: { size: 10 } },
+             backgroundColor: "#b91c1c", color: "#ffffff", borderRadius: 3, padding: 3,
+             font: { size: 10, weight: "bold" as const } },
   };
 }
 
@@ -67,7 +69,8 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
       { label: "min",
         data: rows.map(r => ({ x: Number(r.position), y: Number(r.min) })),
         borderColor: "#0d9488", backgroundColor: "rgba(13,148,136,0.15)",
-        fill: true, pointRadius: 0, borderWidth: 2, tension: 0.15 },
+        fill: true, pointRadius: 0, borderWidth: 2, tension: 0.15,
+        hidden: true },
       { label: "min (smoothed)",
         data: movingAverage(rows, "min", 7).map((y, i) => ({ x: Number(rows[i].position), y })),
         borderColor: "#134e4a", borderDash: [6, 4], pointRadius: 0, borderWidth: 2 },
@@ -79,14 +82,23 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
         x: { type: "linear", title: { display: true, text: "Amino acid position" } },
         y: { min: 0, max: 1, title: { display: true, text: "Minimum feature score (0–1)" } },
       },
-      onClick: (_, els) => { if (els.length === 0) handle.pin(null); },
+      onClick: (_, els) => {
+        const pos = els.length ? Number(rows[els[0].index].position) : null;
+        handle.pin(pos);
+        bus.setMarked(pos);
+      },
       plugins: {
         legend: { labels: { boxWidth: 12 } },
-        tooltip: { callbacks: {
-          title: (items) => { const r = rows[items[0].dataIndex];
-            return `Position ${r.position} (${r.aa}) · min ${r.min}`; },
-          label: (it) => `${it.dataset.label}: ${it.formattedValue} · limiting: ${rows[it.dataIndex].min_feature}`,
-        } },
+        tooltip: {
+          filter: (it) => !(chart.data.datasets[it.datasetIndex] as any).hidden,
+          callbacks: {
+            // items can be empty when every active element was filtered out
+            // (e.g. cross-view highlight pinning) — tolerate that.
+            title: (items) => { const r = rows[items[0]?.dataIndex];
+              return r ? `Position ${r.position} (${r.aa}) · min ${r.min}` : ""; },
+            label: (it) => `${it.dataset.label}: ${it.formattedValue} · limiting: ${rows[it.dataIndex].min_feature}`,
+          },
+        },
         annotation: { annotations },
         zoom: {
           pan: { enabled: true, mode: "x", modifierKey: "shift" },
@@ -113,10 +125,18 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
     chart,
     setHoverCallback: (cb) => { hoverCb = cb; },
     highlight: (pos) => {
-      const idx = pos == null ? -1 : rows.map(r => Number(r.position)).indexOf(pos);
+      const idx = pos == null ? -1 : rows.findIndex(r => Number(r.position) === pos);
       const ae = idx < 0 ? [] : [{ datasetIndex: MIN_DATASET_INDEX, index: idx }];
       chart.setActiveElements(ae);
-      chart.tooltip?.setActiveElements(ae, { x: 0, y: 0 });
+      if (idx >= 0) {
+        // Anchor at the real point pixel — {x:0,y:0} parks the tooltip in the corner.
+        // Tooltip items ride the visible smoothed dataset: the raw one is hidden
+        // and would be filtered out of the tooltip entirely.
+        const pt = chart.getDatasetMeta(MIN_DATASET_INDEX).data[idx] as any;
+        chart.tooltip?.setActiveElements([{ datasetIndex: 1, index: idx }], { x: pt?.x ?? 0, y: pt?.y ?? 0 });
+      } else {
+        chart.tooltip?.setActiveElements([], { x: 0, y: 0 });
+      }
       chart.update();
     },
     pin: (pos) => {
@@ -145,7 +165,7 @@ export function renderMinChart(canvas: HTMLCanvasElement, rows: any[], top: TopS
 
   // Escape unpins (canvas is made focusable for keyboard access).
   canvas.tabIndex = 0;
-  canvas.addEventListener("keydown", (e) => { if (e.key === "Escape") handle.pin(null); });
+  canvas.addEventListener("keydown", (e) => { if (e.key === "Escape") { handle.pin(null); bus.setMarked(null); } });
 
   return handle;
 }
